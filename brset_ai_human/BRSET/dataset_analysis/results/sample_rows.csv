@@ -1,0 +1,6 @@
+image_id,patient_id,camera,patient_age,comorbidities,diabetes_time_y,insuline,patient_sex,exam_eye,diabetes,nationality,optic_disc,vessels,macula,DR_SDRG,DR_ICDR,focus,Illuminaton,image_field,artifacts,diabetic_retinopathy,macular_edema,scar,nevus,amd,vascular_occlusion,hypertensive_retinopathy,drusens,hemorrhage,retinal_detachment,myopic_fundus,increased_cup_disc,other,quality
+img00001,1,Canon CR,48.0,diabetes1,12,yes,1,1,yes,Brazil,1,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,Adequate
+img00002,1,Canon CR,48.0,diabetes1,12,yes,1,2,yes,Brazil,2,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,Adequate
+img00003,2,Canon CR,18.0,diabetes1,7,yes,2,1,yes,Brazil,1,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,Adequate
+img00004,2,Canon CR,18.0,diabetes1,7,yes,2,2,yes,Brazil,1,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,Adequate
+img00005,3,Canon CR,22.0,diabetes1,11,yes,1,1,yes,Brazil,2,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,Adequate

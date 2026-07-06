@@ -1,0 +1,388 @@
+{
+  "computed": "2026-06-21",
+  "n_label_rows": 16266,
+  "n_columns": 34,
+  "columns": [
+    "image_id",
+    "patient_id",
+    "camera",
+    "patient_age",
+    "comorbidities",
+    "diabetes_time_y",
+    "insuline",
+    "patient_sex",
+    "exam_eye",
+    "diabetes",
+    "nationality",
+    "optic_disc",
+    "vessels",
+    "macula",
+    "DR_SDRG",
+    "DR_ICDR",
+    "focus",
+    "Illuminaton",
+    "image_field",
+    "artifacts",
+    "diabetic_retinopathy",
+    "macular_edema",
+    "scar",
+    "nevus",
+    "amd",
+    "vascular_occlusion",
+    "hypertensive_retinopathy",
+    "drusens",
+    "hemorrhage",
+    "retinal_detachment",
+    "myopic_fundus",
+    "increased_cup_disc",
+    "other",
+    "quality"
+  ],
+  "n_unique_patients": 8524,
+  "images_per_patient": {
+    "mean": 1.908,
+    "median": 2.0,
+    "min": 1,
+    "max": 4
+  },
+  "distributions": {
+    "camera": {
+      "Canon CR": [
+        10591,
+        65.11
+      ],
+      "NIKON NF5050": [
+        5675,
+        34.89
+      ]
+    },
+    "patient_sex": {
+      "2": [
+        10052,
+        61.8
+      ],
+      "1": [
+        6214,
+        38.2
+      ]
+    },
+    "exam_eye": {
+      "1": [
+        8155,
+        50.14
+      ],
+      "2": [
+        8111,
+        49.86
+      ]
+    },
+    "diabetes": {
+      "No": [
+        13687,
+        84.14
+      ],
+      "yes": [
+        2579,
+        15.86
+      ]
+    },
+    "insuline": {
+      "nan": [
+        14552,
+        89.46
+      ],
+      "yes": [
+        893,
+        5.49
+      ],
+      "no": [
+        821,
+        5.05
+      ]
+    },
+    "nationality": {
+      "Brazil": [
+        16266,
+        100.0
+      ]
+    },
+    "optic_disc": {
+      "1": [
+        12986,
+        79.84
+      ],
+      "2": [
+        3279,
+        20.16
+      ],
+      "bv": [
+        1,
+        0.01
+      ]
+    },
+    "vessels": {
+      "1": [
+        15459,
+        95.04
+      ],
+      "2": [
+        807,
+        4.96
+      ]
+    },
+    "macula": {
+      "1": [
+        11589,
+        71.25
+      ],
+      "2": [
+        4677,
+        28.75
+      ]
+    },
+    "DR_SDRG": {
+      "0": [
+        15188,
+        93.37
+      ],
+      "4": [
+        402,
+        2.47
+      ],
+      "1": [
+        280,
+        1.72
+      ],
+      "3": [
+        263,
+        1.62
+      ],
+      "2": [
+        133,
+        0.82
+      ]
+    },
+    "DR_ICDR": {
+      "0": [
+        15183,
+        93.34
+      ],
+      "2": [
+        451,
+        2.77
+      ],
+      "4": [
+        396,
+        2.43
+      ],
+      "1": [
+        158,
+        0.97
+      ],
+      "3": [
+        78,
+        0.48
+      ]
+    },
+    "focus": {
+      "1": [
+        15723,
+        96.66
+      ],
+      "2": [
+        541,
+        3.33
+      ],
+      "0": [
+        2,
+        0.01
+      ]
+    },
+    "Illuminaton": {
+      "1": [
+        16182,
+        99.48
+      ],
+      "2": [
+        84,
+        0.52
+      ]
+    },
+    "image_field": {
+      "1": [
+        14865,
+        91.39
+      ],
+      "2": [
+        1401,
+        8.61
+      ]
+    },
+    "artifacts": {
+      "1": [
+        16209,
+        99.65
+      ],
+      "2": [
+        57,
+        0.35
+      ]
+    },
+    "quality": {
+      "Adequate": [
+        14280,
+        87.79
+      ],
+      "Inadequate": [
+        1986,
+        12.21
+      ]
+    }
+  },
+  "patient_age": {
+    "n_nonnull": 10820,
+    "pct_missing": 33.48,
+    "mean": 57.66,
+    "median": 61.0,
+    "p5": 21.0,
+    "p95": 83.0,
+    "min": 5.0,
+    "max": 97.0
+  },
+  "diabetes_time_y": {
+    "n_nonnull": 1864,
+    "pct_missing": 88.54,
+    "mean": 13.12,
+    "median": 10.0,
+    "p5": 1.0,
+    "p95": 30.0,
+    "min": 1.0,
+    "max": 60.0
+  },
+  "label_prevalence": {
+    "diabetic_retinopathy": {
+      "positive": 1070,
+      "pct": 6.58
+    },
+    "macular_edema": {
+      "positive": 401,
+      "pct": 2.47
+    },
+    "scar": {
+      "positive": 291,
+      "pct": 1.79
+    },
+    "nevus": {
+      "positive": 130,
+      "pct": 0.8
+    },
+    "amd": {
+      "positive": 299,
+      "pct": 1.84
+    },
+    "vascular_occlusion": {
+      "positive": 101,
+      "pct": 0.62
+    },
+    "hypertensive_retinopathy": {
+      "positive": 284,
+      "pct": 1.75
+    },
+    "drusens": {
+      "positive": 2833,
+      "pct": 17.42
+    },
+    "hemorrhage": {
+      "positive": 95,
+      "pct": 0.58
+    },
+    "retinal_detachment": {
+      "positive": 7,
+      "pct": 0.04
+    },
+    "myopic_fundus": {
+      "positive": 270,
+      "pct": 1.66
+    },
+    "increased_cup_disc": {
+      "positive": 3205,
+      "pct": 19.7
+    },
+    "other": {
+      "positive": 820,
+      "pct": 5.04
+    }
+  },
+  "images_with_no_listed_disease": 8461,
+  "mean_labels_per_image": 0.603,
+  "max_labels_per_image": 3,
+  "n_jpg_files": 16259,
+  "n_ids_not_on_disk": 7,
+  "ids_not_on_disk": [
+    "img04414",
+    "img04415",
+    "img04416",
+    "img04417",
+    "img04418",
+    "img04419",
+    "img06900"
+  ],
+  "n_files_not_in_labels": 0,
+  "files_not_in_labels": [],
+  "n_duplicate_image_ids": 0,
+  "image_errors": 0,
+  "img_width": {
+    "min": 951,
+    "p5": 2390,
+    "median": 2672,
+    "mean": 2634.2,
+    "p95": 2984,
+    "max": 2984
+  },
+  "img_height": {
+    "min": 874,
+    "p5": 1880,
+    "median": 2056,
+    "mean": 2043.9,
+    "p95": 2304,
+    "max": 2304
+  },
+  "img_filesize_kb": {
+    "min": 202.2,
+    "p5": 376.4,
+    "median": 1064.1,
+    "mean": 1003.1,
+    "p95": 1344.4,
+    "max": 2545.0
+  },
+  "img_modes": {
+    "RGB": 16259
+  },
+  "n_distinct_resolutions": 6,
+  "top_resolutions": [
+    {
+      "res": "2672x2056",
+      "count": 5583
+    },
+    {
+      "res": "2984x2304",
+      "count": 4927
+    },
+    {
+      "res": "2390x1880",
+      "count": 3650
+    },
+    {
+      "res": "2420x1880",
+      "count": 1695
+    },
+    {
+      "res": "951x874",
+      "count": 403
+    },
+    {
+      "res": "990x874",
+      "count": 1
+    }
+  ]
+}
