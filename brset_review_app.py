@@ -730,6 +730,7 @@ a { color: inherit; text-decoration: none; }
 .legend-swatch.recheck { background: #ede9fe; border-color: #c4b5fd; }
 .field { margin-bottom: 13px; }
 label { display: block; color: #334155; font-weight: 650; font-size: 13px; margin-bottom: 6px; }
+.help-text { color: var(--muted); font-size: 12px; margin-top: 5px; }
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -1042,7 +1043,11 @@ PROFILE_BODY = """
       <div class="field"><label>Hospital name</label><input name="hospital_name" required></div>
       <div class="field"><label>Posting / location</label><input name="posting_location"></div>
       <div class="field"><label>Medical registration ID</label><input name="registration_id"></div>
-      <div class="field"><label>Email or phone</label><input name="contact" required></div>
+      <div class="field">
+        <label>Email</label>
+        <input name="contact" type="email" required>
+        <div class="help-text">(Use the same email to continue sessions.)</div>
+      </div>
       <div class="field"><label>Initial mode</label>
         <select name="mode">
           {% for key, label in mode_labels.items() %}
@@ -1063,7 +1068,7 @@ RESUME_BODY = """
   <div class="topbar">
     <div>
       <h1 class="title">Continue Previous Review?</h1>
-      <div class="subtitle">A saved review profile matches this contact.</div>
+      <div class="subtitle">A saved review profile matches this email.</div>
     </div>
   </div>
   <form class="profile-card" method="post" action="{{ url_for('start') }}">
