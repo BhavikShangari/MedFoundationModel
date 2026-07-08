@@ -1593,8 +1593,8 @@ def scan_image(image_id: str) -> Response:
     return send_transformed_query_image(
         resolve_image_path(
             image_id,
-            [RETRIEVAL_IMAGE_DIR, TEST_IMAGE_DIR],
-            recursive_dirs=[BRSET_DIR, NORMAL_MODEL_DIR],
+            [RETRIEVAL_IMAGE_DIR],
+            recursive_dirs=[BRSET_DIR],
         )
     )
 
