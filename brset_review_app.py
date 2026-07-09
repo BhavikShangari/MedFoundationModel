@@ -1201,6 +1201,11 @@ REVIEW_BODY = """
     {% if already_saved %}
     <div class="note saved">A response is already saved for this case. Saving again will update it.</div>
     {% endif %}
+    {% if mode == "human" %}
+    <div class="note">In Human only mode, the doctor reviews the retinal scan and decides which disease or diseases are present.</div>
+    {% elif mode == "combined" %}
+    <div class="note">In Human + Dinomaly mode, the doctor receives support from an AI model trained only on healthy images. The model shows an anomaly map for regions it considers anomalous, along with retrieved cases it considers similar to the test case and the diseases present in those retrieved cases.</div>
+    {% endif %}
 
     <div class="workspace">
       <section>
