@@ -866,6 +866,30 @@ textarea { min-height: 96px; resize: vertical; }
   border-left-color: var(--warn-line);
   background: var(--warn);
 }
+.timer-box {
+  border: 1px solid #9fd7cf;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  padding: 10px 11px;
+  margin: 12px 0;
+}
+.timer-label {
+  color: #075e56;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.timer-value {
+  font-size: 22px;
+  font-weight: 780;
+  margin-top: 4px;
+}
+.timer-state {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
 .checkbox-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -1010,6 +1034,48 @@ function syncDiseaseSelection(checkbox) {
   if (!item) return;
   item.classList.toggle("selected", checkbox.checked);
 }
+function setupReviewTimer() {
+  const input = document.querySelector('input[name="review_time_seconds"]');
+  const value = document.querySelector("[data-review-timer-value]");
+  const state = document.querySelector("[data-review-timer-state]");
+  if (!input || !value || !state) return;
+
+  let started = false;
+  let startAt = 0;
+  let elapsedSeconds = 0;
+  let intervalId = null;
+
+  function formatSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function updateTimer() {
+    if (started) {
+      elapsedSeconds = Math.max(0, Math.floor((performance.now() - startAt) / 1000));
+    }
+    input.value = String(elapsedSeconds);
+    value.textContent = formatSeconds(elapsedSeconds);
+  }
+
+  function startTimer() {
+    if (started) return;
+    started = true;
+    startAt = performance.now();
+    state.textContent = "Time running";
+    updateTimer();
+    intervalId = window.setInterval(updateTimer, 1000);
+  }
+
+  document.addEventListener("pointerdown", startTimer, { once: true });
+  document.addEventListener("keydown", startTimer, { once: true });
+  window.addEventListener("focus", startTimer, { once: true });
+  document.querySelectorAll("form").forEach((form) => {
+    form.addEventListener("submit", updateTimer);
+  });
+  updateTimer();
+}
 document.addEventListener("change", function (event) {
   const target = event.target;
   if (target.matches('input[type="checkbox"][name="diseases"]')) {
@@ -1018,6 +1084,7 @@ document.addEventListener("change", function (event) {
 });
 document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll('input[type="checkbox"][name="diseases"]').forEach(syncDiseaseSelection);
+  setupReviewTimer();
 });
 </script>
 </body>
@@ -1209,7 +1276,12 @@ REVIEW_BODY = """
             </div>
             {% endfor %}
           </div>
-          <div class="field"><label>Review time in seconds</label><input name="review_time_seconds" type="number" min="0" max="3600" step="5" value="{{ previous_review_time }}"></div>
+          <input name="review_time_seconds" type="hidden" value="0">
+          <div class="timer-box">
+            <div class="timer-label">Review time</div>
+            <div class="timer-value" data-review-timer-value>00:00</div>
+            <div class="timer-state" data-review-timer-state>Timer starts when you click into this case.</div>
+          </div>
           <div class="field"><label>Comments</label><textarea name="comments">{{ previous_comments }}</textarea></div>
           <div class="actions">
             <button class="btn" name="action" value="save_next" type="submit">Save and next</button>
@@ -1476,7 +1548,6 @@ def review() -> str | Response:
         previous_diseases=previous_diseases,
         certainty_levels=CERTAINTY_LEVELS,
         disease_certainties=disease_certainties_from_response(previous),
-        previous_review_time=previous.get("review_time_seconds", "0") or "0",
         previous_comments=previous.get("comments", ""),
         needs_recheck=needs_recheck,
         previous_url=previous_url,
@@ -1545,6 +1616,10 @@ def save() -> Response:
     for disease in selected:
         certainty = form.get(f"certainty_{assessment_field_name(disease)}", "high")
         selected_disease_certainties[disease] = certainty if certainty in CERTAINTY_LEVELS else "high"
+    try:
+        review_time_seconds = max(0, int(float(form.get("review_time_seconds", "0"))))
+    except (TypeError, ValueError):
+        review_time_seconds = 0
     vote_counts = {
         item["disease"]: item["count"]
         for item in prediction["evidence"]
@@ -1572,7 +1647,7 @@ def save() -> Response:
         "doctor_selected_count": len(selected),
         "needs_recheck": int(needs_recheck),
         "selected_disease_certainty_json": json.dumps(selected_disease_certainties, sort_keys=True),
-        "review_time_seconds": form.get("review_time_seconds", "0"),
+        "review_time_seconds": review_time_seconds,
         "comments": form.get("comments", ""),
         "dinomaly_predicted_diseases": ";".join(prediction["predicted"]),
         "dinomaly_vote_counts_json": json.dumps(vote_counts, sort_keys=True),
