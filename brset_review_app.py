@@ -802,6 +802,12 @@ textarea { min-height: 96px; resize: vertical; }
   margin-bottom: 10px;
 }
 .panel-title-row .panel-title { margin-bottom: 0; }
+.panel-description {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: -4px 0 10px;
+}
 .zoom-link {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1201,11 +1207,6 @@ REVIEW_BODY = """
     {% if already_saved %}
     <div class="note saved">A response is already saved for this case. Saving again will update it.</div>
     {% endif %}
-    {% if mode == "human" %}
-    <div class="note">In Human only mode, the doctor reviews the retinal scan and decides which disease or diseases are present.</div>
-    {% elif mode == "combined" %}
-    <div class="note">In Human + Dinomaly mode, the doctor receives support from an AI model trained only on healthy images. The model shows an anomaly map for regions it considers anomalous, along with retrieved cases it considers similar to the test case and the diseases present in those retrieved cases.</div>
-    {% endif %}
 
     <div class="workspace">
       <section>
@@ -1215,6 +1216,7 @@ REVIEW_BODY = """
             <div class="panel-title">Scan</div>
             <a class="zoom-link" target="_blank" href="{{ url_for('zoom_image', kind='scan', image_id=image_id) }}">Zoom</a>
           </div>
+          <div class="panel-description">Test scan image. The doctor reviews this image and decides which disease or diseases are present.</div>
           <img class="scan-img" src="{{ url_for('scan_image', image_id=image_id) }}" alt="Scan">
         </div>
         {% elif mode == "combined" %}
@@ -1224,11 +1226,13 @@ REVIEW_BODY = """
               <div class="panel-title">Scan</div>
               <a class="zoom-link" target="_blank" href="{{ url_for('zoom_image', kind='scan', image_id=image_id) }}">Zoom</a>
             </div>
+            <div class="panel-description">Test scan image.</div>
             <img class="scan-img" src="{{ url_for('scan_image', image_id=image_id) }}" alt="Scan">
             <div class="panel-title-row" style="margin-top:14px;">
               <div class="panel-title">Anomaly map</div>
               <a class="zoom-link" target="_blank" href="{{ url_for('zoom_compare', image_id=image_id) }}">Zoom</a>
             </div>
+            <div class="panel-description">The AI model highlights regions it thinks are anomalous. This model is trained only using healthy images.</div>
             <img class="scan-img" src="{{ url_for('anomaly_image', image_id=image_id) }}" alt="Anomaly map">
             <div class="panel-title" style="margin-top:14px;">Dinomaly prediction</div>
             <div class="case-meta" style="margin-bottom:8px;">Showing labels present in at least 3 of the 5 retrieved scans.</div>
@@ -1237,6 +1241,7 @@ REVIEW_BODY = """
           </div>
           <div class="panel">
             <div class="panel-title">Retrieved scans with labels</div>
+            <div class="panel-description">Similar retrieved cases which Dinomaly thinks are similar to the current test case, with the diseases present in those retrieved cases.</div>
             {{ retrieval_cards|safe }}
           </div>
         </div>
