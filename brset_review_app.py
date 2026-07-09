@@ -761,6 +761,10 @@ textarea { min-height: 96px; resize: vertical; }
   border-radius: 8px;
   padding: 15px 16px;
   margin-bottom: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
 }
 .case-title { font-size: 20px; font-weight: 760; }
 .case-meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
@@ -870,24 +874,20 @@ textarea { min-height: 96px; resize: vertical; }
   border: 1px solid #9fd7cf;
   border-radius: 8px;
   background: var(--accent-soft);
-  padding: 10px 11px;
-  margin: 12px 0;
+  padding: 8px 12px;
+  min-width: 112px;
+  text-align: right;
 }
 .timer-label {
   color: #075e56;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .timer-value {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 780;
-  margin-top: 4px;
-}
-.timer-state {
-  color: var(--muted);
-  font-size: 12px;
   margin-top: 2px;
 }
 .checkbox-grid {
@@ -1011,6 +1011,8 @@ textarea { min-height: 96px; resize: vertical; }
 @media (max-width: 1100px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: relative; height: auto; }
+  .case-header { align-items: flex-start; flex-wrap: wrap; }
+  .timer-box { text-align: left; }
   .workspace, .evidence-grid, .profile-grid, .zoom-compare { grid-template-columns: 1fr; }
   .span-2 { grid-column: span 1; }
 }
@@ -1037,13 +1039,10 @@ function syncDiseaseSelection(checkbox) {
 function setupReviewTimer() {
   const input = document.querySelector('input[name="review_time_seconds"]');
   const value = document.querySelector("[data-review-timer-value]");
-  const state = document.querySelector("[data-review-timer-state]");
-  if (!input || !value || !state) return;
+  if (!input || !value) return;
 
-  let started = false;
-  let startAt = 0;
+  const startAt = performance.now();
   let elapsedSeconds = 0;
-  let intervalId = null;
 
   function formatSeconds(totalSeconds) {
     const minutes = Math.floor(totalSeconds / 60);
@@ -1052,29 +1051,16 @@ function setupReviewTimer() {
   }
 
   function updateTimer() {
-    if (started) {
-      elapsedSeconds = Math.max(0, Math.floor((performance.now() - startAt) / 1000));
-    }
+    elapsedSeconds = Math.max(0, Math.floor((performance.now() - startAt) / 1000));
     input.value = String(elapsedSeconds);
     value.textContent = formatSeconds(elapsedSeconds);
   }
 
-  function startTimer() {
-    if (started) return;
-    started = true;
-    startAt = performance.now();
-    state.textContent = "Time running";
-    updateTimer();
-    intervalId = window.setInterval(updateTimer, 1000);
-  }
-
-  document.addEventListener("pointerdown", startTimer, { once: true });
-  document.addEventListener("keydown", startTimer, { once: true });
-  window.addEventListener("focus", startTimer, { once: true });
   document.querySelectorAll("form").forEach((form) => {
     form.addEventListener("submit", updateTimer);
   });
   updateTimer();
+  window.setInterval(updateTimer, 1000);
 }
 document.addEventListener("change", function (event) {
   const target = event.target;
@@ -1203,8 +1189,14 @@ REVIEW_BODY = """
     </div>
 
     <div class="case-header">
-      <div class="case-title">Case {{ index + 1 }} of {{ total_cases }}</div>
-      <div class="case-meta">{{ mode_label }} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
+      <div>
+        <div class="case-title">Case {{ index + 1 }} of {{ total_cases }}</div>
+        <div class="case-meta">{{ mode_label }} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
+      </div>
+      <div class="timer-box">
+        <div class="timer-label">Review time</div>
+        <div class="timer-value" data-review-timer-value>00:00</div>
+      </div>
     </div>
     {% if already_saved %}
     <div class="note saved">A response is already saved for this case. Saving again will update it.</div>
@@ -1277,11 +1269,6 @@ REVIEW_BODY = """
             {% endfor %}
           </div>
           <input name="review_time_seconds" type="hidden" value="0">
-          <div class="timer-box">
-            <div class="timer-label">Review time</div>
-            <div class="timer-value" data-review-timer-value>00:00</div>
-            <div class="timer-state" data-review-timer-state>Timer starts when you click into this case.</div>
-          </div>
           <div class="field"><label>Comments</label><textarea name="comments">{{ previous_comments }}</textarea></div>
           <div class="actions">
             <button class="btn" name="action" value="save_next" type="submit">Save and next</button>
