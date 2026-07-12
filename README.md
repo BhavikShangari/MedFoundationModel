@@ -14,10 +14,10 @@ The app shows each test scan, patient age and gender, optional Dinomaly retrieva
   - `BRSET/fundus_photos/` original fundus images.
   - `normal_model/original_img/` test case images.
   - `normal_model/anomaly_scan/` anomaly maps.
+  - `normal_model/brset_normal_test_name.pkl`, `normal_model/brset_normal_train_name.pkl`.
+  - `normal_model/similarity_data.pkl`, `normal_model/indices_data.pkl`.
+  - `normal_model/brset_normal_*_feats.pt`, `normal_model/brset_normal_*_labels.pt`.
   - `brset_dataset_distribution.csv` metadata and labels.
-  - `brset_normal_test_name.pkl`, `brset_normal_train_name.pkl`.
-  - `similarity_data.pkl`, `indices_data.pkl`.
-  - `brset_normal_*_feats.pt`, `brset_normal_*_labels.pt`.
 - `requirements.txt`, `Procfile`, `render.yaml` - deployment files.
 
 ## Local Run
