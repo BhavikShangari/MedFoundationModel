@@ -71,6 +71,7 @@ RESPONSE_FIELDS = [
     "contact",
     "contact_key",
     "mode",
+    "dinomaly_model",
     "case_number",
     "image_id",
     "patient_id",
@@ -99,6 +100,7 @@ SESSION_LOG_FIELDS = [
     "doctor_name",
     "contact",
     "mode",
+    "dinomaly_model",
     "case_number",
     "image_id",
     "answered_human",
@@ -112,19 +114,30 @@ MODE_LABELS = {
     "human": "Human only",
     "combined": "Human + Dinomaly",
 }
-
 ROOT = Path(__file__).resolve().parent
+DEFAULT_DINOMALY_MODEL = "dinomaly_h"
+DINOMALY_MODELS = {
+    "dinomaly_h": {
+        "label": "Dinomaly-H",
+        "training": "Healthy-only pretraining",
+        "description": "Dinomaly trained using healthy images only.",
+        "folder": ROOT / "brset_ai_human/dinomaly_h",
+        "test_names": "brset_normal_test_name.pkl",
+        "train_names": "brset_normal_train_name.pkl",
+    },
+    "dinomaly_hd": {
+        "label": "Dinomaly-HD",
+        "training": "Healthy + diseased pretraining",
+        "description": "Dinomaly pretrained using healthy and diseased images.",
+        "folder": ROOT / "brset_ai_human/dinomaly_hd",
+        "test_names": "brset_normal_disease_test_name.pkl",
+        "train_names": "brset_normal_disease_train_name.pkl",
+    },
+}
+
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
-MODEL_DIR = ROOT / "brset_ai_human/normal_model"
-TEST_NAMES_PKL = MODEL_DIR / "brset_normal_test_name.pkl"
-TRAIN_NAMES_PKL = MODEL_DIR / "brset_normal_train_name.pkl"
-SIMILARITIES_PKL = MODEL_DIR / "similarity_data.pkl"
-INDICES_PKL = MODEL_DIR / "indices_data.pkl"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
-TEST_IMAGE_DIR = MODEL_DIR / "original_img"
-NORMAL_MODEL_DIR = MODEL_DIR
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
-ANOMALY_DIR = MODEL_DIR / "anomaly_scan"
 RESPONSES_CSV = ROOT / "doctor_review_responses.csv"
 SESSION_LOG_CSV = ROOT / "doctor_review_session_log.csv"
 SESSIONS_JSON = ROOT / "doctor_review_sessions.json"
@@ -183,6 +196,38 @@ def load_pickle(path: Path) -> Any:
         return pickle.load(handle)
 
 
+def dinomaly_model_key(value: Any = None) -> str:
+    key = str(value or DEFAULT_DINOMALY_MODEL)
+    return key if key in DINOMALY_MODELS else DEFAULT_DINOMALY_MODEL
+
+
+def model_config(model_key: Any = None) -> dict[str, Any]:
+    return DINOMALY_MODELS[dinomaly_model_key(model_key)]
+
+
+def model_file(model_key: Any, filename_key: str) -> Path:
+    config = model_config(model_key)
+    return config["folder"] / config[filename_key]
+
+
+def model_dir(model_key: Any = None) -> Path:
+    return model_config(model_key)["folder"]
+
+
+def model_test_image_dir(model_key: Any = None) -> Path:
+    return model_dir(model_key) / "original_img"
+
+
+def model_anomaly_dir(model_key: Any = None) -> Path:
+    return model_dir(model_key) / "anomaly_scan"
+
+
+def scoped_mode(mode: str, model_key: Any = None) -> str:
+    if mode in METHOD_MODES:
+        return f"{mode}:{dinomaly_model_key(model_key)}"
+    return mode
+
+
 @lru_cache(maxsize=1)
 def metadata_df() -> pd.DataFrame:
     df = pd.read_csv(METADATA_CSV)
@@ -190,31 +235,34 @@ def metadata_df() -> pd.DataFrame:
     return df
 
 
-@lru_cache(maxsize=1)
-def test_names() -> list[str]:
+@lru_cache(maxsize=None)
+def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
+    model_key = dinomaly_model_key(model_key)
+    test_image_dir = model_test_image_dir(model_key)
     folder_names = sorted(
         normalize_image_id(path.name)
-        for path in TEST_IMAGE_DIR.iterdir()
+        for path in test_image_dir.iterdir()
         if path.is_file()
-    )
+    ) if test_image_dir.exists() else []
     if folder_names:
         return folder_names
-    return [normalize_image_id(name) for name in load_pickle(TEST_NAMES_PKL)]
+    return [normalize_image_id(name) for name in load_pickle(model_file(model_key, "test_names"))]
 
 
-@lru_cache(maxsize=1)
-def train_names() -> list[str]:
-    return [normalize_image_id(name) for name in load_pickle(TRAIN_NAMES_PKL)]
+@lru_cache(maxsize=None)
+def train_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
+    model_key = dinomaly_model_key(model_key)
+    return [normalize_image_id(name) for name in load_pickle(model_file(model_key, "train_names"))]
 
 
-@lru_cache(maxsize=1)
-def similarities() -> np.ndarray:
-    return np.asarray(load_pickle(SIMILARITIES_PKL))
+@lru_cache(maxsize=None)
+def similarities(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    return np.asarray(load_pickle(model_dir(model_key) / "similarity_data.pkl"))
 
 
-@lru_cache(maxsize=1)
-def indices() -> np.ndarray:
-    return np.asarray(load_pickle(INDICES_PKL))
+@lru_cache(maxsize=None)
+def indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    return np.asarray(load_pickle(model_dir(model_key) / "indices_data.pkl"))
 
 
 def metadata_lookup(image_id: str) -> pd.Series | None:
@@ -447,6 +495,7 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
         "doctor_name": payload.get("doctor_name", ""),
         "contact": payload.get("contact", ""),
         "mode": payload.get("mode", ""),
+        "dinomaly_model": payload.get("dinomaly_model", ""),
         "case_number": payload.get("case_number", ""),
         "image_id": payload.get("image_id", ""),
         "answered_human": progress.get("human", payload.get("answered_human", "")),
@@ -459,29 +508,37 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
     write_csv_rows(SESSION_LOG_CSV, rows, SESSION_LOG_FIELDS)
 
 
-def response_key(row: dict[str, Any]) -> tuple[str, str, str]:
+def response_model_key(row: dict[str, Any]) -> str:
+    return dinomaly_model_key(row.get("dinomaly_model")) if row.get("mode") in METHOD_MODES else ""
+
+
+def response_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
     session_id = row.get("reviewer_session_uid") or row.get("session_id") or ""
-    return str(session_id), str(row.get("mode", "")), str(row.get("image_id", ""))
+    mode = str(row.get("mode", ""))
+    return str(session_id), mode, response_model_key(row), normalize_image_id(row.get("image_id", ""))
 
 
-def answered_ids(session_id: str, mode: str) -> set[str]:
+def answered_ids(session_id: str, mode: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> set[str]:
+    expected_model = dinomaly_model_key(model_key) if mode in METHOD_MODES else ""
     return {
         normalize_image_id(row["image_id"])
         for row in read_csv_rows(RESPONSES_CSV)
         if (row.get("reviewer_session_uid") or row.get("session_id")) == session_id
         and row.get("mode") == mode
+        and response_model_key(row) == expected_model
     }
 
 
-def saved_response(session_id: str, mode: str, image_id: str) -> dict[str, str] | None:
+def saved_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> dict[str, str] | None:
+    key = (session_id, mode, dinomaly_model_key(model_key) if mode in METHOD_MODES else "", normalize_image_id(image_id))
     for row in reversed(read_csv_rows(RESPONSES_CSV)):
-        if response_key(row) == (session_id, mode, normalize_image_id(image_id)):
+        if response_key(row) == key:
             return row
     return None
 
 
-def next_unanswered(answered: set[str], start_index: int = 0) -> int:
-    names = test_names()
+def next_unanswered(answered: set[str], start_index: int = 0, model_key: str = DEFAULT_DINOMALY_MODEL) -> int:
+    names = test_names(model_key)
     for offset in range(len(names)):
         index = (start_index + offset) % len(names)
         if names[index] not in answered:
@@ -489,16 +546,17 @@ def next_unanswered(answered: set[str], start_index: int = 0) -> int:
     return min(start_index, len(names) - 1)
 
 
-def retrieval_rows(test_index: int, top_k: int) -> list[dict[str, Any]]:
+def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
+    model_key = dinomaly_model_key(model_key)
     rows = []
-    for rank, train_index in enumerate(indices()[test_index].tolist()[:top_k], start=1):
-        image_id = train_names()[int(train_index)]
+    for rank, train_index in enumerate(indices(model_key)[test_index].tolist()[:top_k], start=1):
+        image_id = train_names(model_key)[int(train_index)]
         row = metadata_lookup(image_id)
         rows.append(
             {
                 "rank": rank,
                 "image_id": image_id,
-                "similarity": float(similarities()[test_index][rank - 1]),
+                "similarity": float(similarities(model_key)[test_index][rank - 1]),
                 "diseases": present_diseases(row),
             }
         )
@@ -582,13 +640,13 @@ def upsert_response(response: dict[str, Any]) -> None:
     write_csv_rows(RESPONSES_CSV, rows, RESPONSE_FIELDS)
 
 
-def delete_response(session_id: str, mode: str, image_id: str) -> bool:
+def delete_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> bool:
     rows = read_csv_rows(RESPONSES_CSV)
-    key = (session_id, mode, normalize_image_id(image_id))
+    key = (session_id, mode, dinomaly_model_key(model_key) if mode in METHOD_MODES else "", normalize_image_id(image_id))
     kept = [row for row in rows if response_key(row) != key]
     deleted = len(kept) != len(rows)
     if rows:
-        write_csv_rows(RESPONSES_CSV, kept, list(rows[0].keys()))
+        write_csv_rows(RESPONSES_CSV, kept, RESPONSE_FIELDS)
     return deleted
 
 
@@ -695,6 +753,24 @@ a { color: inherit; text-decoration: none; }
   color: #075e56;
   font-weight: 700;
 }
+.model-list { display: grid; gap: 8px; margin: 10px 0 18px; }
+.model-link {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #ffffff;
+  color: #334155;
+}
+.model-link span { font-size: 14px; font-weight: 760; }
+.model-link small { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.model-link.active {
+  border-color: #9fd7cf;
+  background: var(--accent-soft);
+  color: #075e56;
+}
+.model-link.active small { color: #0f766e; }
 .case-board {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -1174,15 +1250,27 @@ REVIEW_BODY = """
     <div class="mode-list">
       {% for key, label in mode_labels.items() %}
       <a class="mode-link {% if key == mode %}active{% endif %}"
-         href="{{ url_for('review', mode=key) }}">{{ label }}</a>
+         href="{{ url_for('review', mode=key, model=model_key) }}">{{ label }}</a>
       {% endfor %}
     </div>
+    {% if mode == "combined" %}
+    <div class="panel-title">Dinomaly variant</div>
+    <div class="model-list">
+      {% for key, config in dinomaly_models.items() %}
+      <a class="model-link {% if key == model_key %}active{% endif %}"
+         href="{{ url_for('review', mode=mode, model=key, index=index) }}">
+        <span>{{ config.label }}</span>
+        <small>{{ config.training }}</small>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="panel-title">Cases</div>
     <div class="case-board">
       {% for case in case_cells %}
       <a class="case-cell {{ case.status }} {% if case.index == index %}active{% endif %}"
          title="Case {{ case.index + 1 }} - {{ case.status_label }}"
-         href="{{ url_for('review', mode=mode, index=case.index) }}">{{ case.index + 1 }}</a>
+         href="{{ url_for('review', mode=mode, model=model_key, index=case.index) }}">{{ case.index + 1 }}</a>
       {% endfor %}
     </div>
     <div class="case-legend">
@@ -1206,7 +1294,7 @@ REVIEW_BODY = """
     <div class="case-header">
       <div>
         <div class="case-title">Case {{ index + 1 }} of {{ total_cases }}</div>
-        <div class="case-meta">{{ mode_label }} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
+        <div class="case-meta">{{ mode_label }}{% if mode == "combined" %} | {{ model_label }}{% endif %} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
       </div>
       <div class="timer-box">
         <div class="timer-label">Review time</div>
@@ -1239,10 +1327,10 @@ REVIEW_BODY = """
             <img class="scan-img" src="{{ url_for('scan_image', image_id=image_id) }}" alt="Scan">
             <div class="panel-title-row" style="margin-top:14px;">
               <div class="panel-title">Anomaly map</div>
-              <a class="zoom-link" target="_blank" href="{{ url_for('zoom_compare', image_id=image_id) }}">Zoom</a>
+              <a class="zoom-link" target="_blank" href="{{ url_for('zoom_compare', image_id=image_id, model=model_key) }}">Zoom</a>
             </div>
-            <div class="panel-description">The AI model highlights regions it thinks are anomalous. This model is trained only using healthy images.</div>
-            <img class="scan-img" src="{{ url_for('anomaly_image', image_id=image_id) }}" alt="Anomaly map">
+            <div class="panel-description">The AI model highlights regions it thinks are anomalous. {{ model_description }}</div>
+            <img class="scan-img" src="{{ url_for('anomaly_image', image_id=image_id, model=model_key) }}" alt="Anomaly map">
             <div class="panel-title" style="margin-top:14px;">Dinomaly prediction</div>
             <div class="case-meta" style="margin-bottom:8px;">Showing labels present in at least 3 of the 5 retrieved scans.</div>
             {{ prediction_pills|safe }}
@@ -1261,6 +1349,7 @@ REVIEW_BODY = """
         <div class="panel-title">Assessment</div>
         <form method="post" action="{{ url_for('save') }}">
           <input type="hidden" name="mode" value="{{ mode }}">
+          <input type="hidden" name="dinomaly_model" value="{{ model_key }}">
           <input type="hidden" name="index" value="{{ index }}">
           <input type="hidden" name="image_id" value="{{ image_id }}">
           <input type="hidden" name="top_k" value="{{ top_k }}">
@@ -1355,16 +1444,17 @@ def pill_html(values: list[str], strong: bool = False, empty: str = "None") -> s
     return "".join(f"<span class='{class_name}'>{value}</span>" for value in values)
 
 
-def retrieval_cards_html(retrieved: list[dict[str, Any]], show_labels: bool) -> str:
+def retrieval_cards_html(retrieved: list[dict[str, Any]], show_labels: bool, model_key: str = DEFAULT_DINOMALY_MODEL) -> str:
+    model_key = dinomaly_model_key(model_key)
     cards = ["<div class='retrieval-list'>"]
     for item in retrieved:
         cards.append(
             "<div class='retrieval-card'>"
             f"<div class='retrieval-head'><span>Retrieved scan {item['rank']}</span>"
             f"<span>Similarity {item['similarity']:.3f}</span></div>"
-            f"<img class='retrieval-img' src='{url_for('retrieval_image', image_id=item['image_id'])}' alt='Retrieved scan'>"
+            f"<img class='retrieval-img' src='{url_for('retrieval_image', image_id=item['image_id'], model=model_key)}' alt='Retrieved scan'>"
             f"<div style='margin-top:8px;'><a class='zoom-link' target='_blank' "
-            f"href='{url_for('zoom_image', kind='retrieval', image_id=item['image_id'])}'>Zoom</a></div>"
+            f"href='{url_for('zoom_image', kind='retrieval', image_id=item['image_id'], model=model_key)}'>Zoom</a></div>"
         )
         if show_labels:
             cards.append(pill_html(item["diseases"], empty=NO_DISEASE_OPTION))
@@ -1386,9 +1476,10 @@ def evidence_html(evidence: list[dict[str, Any]]) -> str:
     return "".join(rows)
 
 
-def case_cells_for(session_id: str, mode: str, current_index: int) -> list[dict[str, Any]]:
+def case_cells_for(session_id: str, mode: str, current_index: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
     statuses = load_case_statuses()
-    answered = answered_ids(session_id, mode)
+    status_mode = scoped_mode(mode, model_key)
+    answered = answered_ids(session_id, mode, model_key)
     labels = {
         "new": "not opened",
         "opened": "opened, not saved",
@@ -1396,8 +1487,8 @@ def case_cells_for(session_id: str, mode: str, current_index: int) -> list[dict[
         "recheck": "saved, marked for recheck",
     }
     cells = []
-    for idx, image_id in enumerate(test_names()):
-        status = case_status_for(session_id, mode, image_id, answered, statuses)
+    for idx, image_id in enumerate(test_names(model_key)):
+        status = case_status_for(session_id, status_mode, image_id, answered, statuses)
         cells.append(
             {
                 "index": idx,
@@ -1425,6 +1516,9 @@ def start() -> str | Response:
     mode = form.get("mode", "human")
     if mode not in MODE_LABELS:
         mode = "human"
+    model_key = dinomaly_model_key(form.get("dinomaly_model") or form.get("model"))
+    if mode not in METHOD_MODES:
+        model_key = DEFAULT_DINOMALY_MODEL
     action = form.get("session_action", "check")
     existing_match = latest_matching_session(sessions, form.get("contact", ""))
 
@@ -1479,9 +1573,9 @@ def start() -> str | Response:
     save_sessions(sessions)
     browser_session["review_session_id"] = session_id
     browser_session.pop("pending_resume_session_id", None)
-    answered = answered_ids(session_id, mode)
-    log_event(event, {**sessions[session_id], "mode": mode, "answered_count": len(answered), "total_cases": len(test_names())})
-    return redirect(url_for("review", mode=mode, index=next_unanswered(answered)))
+    answered = answered_ids(session_id, mode, model_key)
+    log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
+    return redirect(url_for("review", mode=mode, model=model_key, index=next_unanswered(answered, model_key=model_key)))
 
 
 @app.get("/review")
@@ -1498,24 +1592,30 @@ def review() -> str | Response:
     mode = request.args.get("mode", "human")
     if mode not in MODE_LABELS:
         mode = "human"
+    model_key = dinomaly_model_key(request.args.get("model"))
+    if mode not in METHOD_MODES:
+        model_key = DEFAULT_DINOMALY_MODEL
+    status_mode = scoped_mode(mode, model_key)
+    names = test_names(model_key)
+    total_cases = len(names)
     top_k = DINOMALY_RETRIEVAL_COUNT
     min_votes = DINOMALY_PREDICTION_MIN_VOTES
-    answered = answered_ids(session_id, mode)
+    answered = answered_ids(session_id, mode, model_key)
     index_arg = request.args.get("index")
-    index = next_unanswered(answered) if index_arg is None else int(index_arg)
-    index = max(0, min(len(test_names()) - 1, index))
-    image_id = test_names()[index]
+    index = next_unanswered(answered, model_key=model_key) if index_arg is None else int(index_arg)
+    index = max(0, min(total_cases - 1, index))
+    image_id = names[index]
     row = metadata_lookup(image_id)
     if image_id not in answered:
-        mark_case_status(session_id, mode, image_id, "opened", needs_recheck=False)
-    retrieved = retrieval_rows(index, top_k)
+        mark_case_status(session_id, status_mode, image_id, "opened", needs_recheck=False)
+    retrieved = retrieval_rows(index, top_k, model_key) if mode in METHOD_MODES else []
     prediction_min_votes = DINOMALY_PREDICTION_MIN_VOTES
     prediction = method_prediction(retrieved, prediction_min_votes)
     if mode in METHOD_MODES:
         prediction["evidence"] = [
             item for item in prediction["evidence"] if item["count"] >= prediction_min_votes
         ]
-    previous = saved_response(session_id, mode, image_id) or {}
+    previous = saved_response(session_id, mode, image_id, model_key) or {}
     previous_diseases = [
         disease
         for disease in parse_assessment_list(previous.get("doctor_selected_diseases", ""))
@@ -1523,30 +1623,34 @@ def review() -> str | Response:
     ]
     if previous.get("doctor_selected_no_disease") in {"1", "True", "true"}:
         previous_diseases.insert(0, NO_DISEASE_OPTION)
-    needs_recheck = previous.get("needs_recheck") in {"1", "True", "true"} or needs_recheck_for(session_id, mode, image_id)
+    needs_recheck = previous.get("needs_recheck") in {"1", "True", "true"} or needs_recheck_for(session_id, status_mode, image_id)
 
-    previous_url = url_for("review", mode=mode, top_k=top_k, min_votes=min_votes, index=max(0, index - 1))
-    next_url = url_for("review", mode=mode, top_k=top_k, min_votes=min_votes, index=min(len(test_names()) - 1, index + 1))
+    previous_url = url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=max(0, index - 1))
+    next_url = url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=min(total_cases - 1, index + 1))
     mode_short = {"human": "Human", "combined": "Combined"}[mode]
 
     return render_page(
         REVIEW_BODY,
         doctor=sessions[session_id],
         mode=mode,
+        model_key=model_key,
+        model_label=model_config(model_key)["label"],
+        model_description=model_config(model_key)["description"],
+        dinomaly_models=DINOMALY_MODELS,
         mode_label=MODE_LABELS[mode],
         mode_short=mode_short,
         mode_labels=MODE_LABELS,
         patient_demo=patient_demographics(row),
         index=index,
         image_id=image_id,
-        total_cases=len(test_names()),
+        total_cases=total_cases,
         answered_count=len(answered),
         already_saved=image_id in answered,
-        case_cells=case_cells_for(session_id, mode, index),
+        case_cells=case_cells_for(session_id, mode, index, model_key),
         top_k=top_k,
         min_votes=min_votes,
         retrieved=retrieved,
-        retrieval_cards=retrieval_cards_html(retrieved, show_labels=mode == "combined"),
+        retrieval_cards=retrieval_cards_html(retrieved, show_labels=mode == "combined", model_key=model_key),
         prediction_pills=pill_html(prediction["predicted"], strong=True, empty="No prediction"),
         evidence_html=evidence_html(prediction["evidence"]),
         disease_columns=ASSESSMENT_OPTIONS,
@@ -1568,6 +1672,10 @@ def save() -> Response:
     if not session_id:
         return redirect(url_for("profile"))
     mode = form["mode"]
+    model_key = dinomaly_model_key(form.get("dinomaly_model"))
+    if mode not in METHOD_MODES:
+        model_key = DEFAULT_DINOMALY_MODEL
+    status_mode = scoped_mode(mode, model_key)
     index = int(form["index"])
     image_id = normalize_image_id(form["image_id"])
     top_k = DINOMALY_RETRIEVAL_COUNT
@@ -1579,31 +1687,33 @@ def save() -> Response:
     doctor = sessions.get(session_id, {})
 
     if action == "clear_current":
-        deleted = delete_response(session_id, mode, image_id)
-        mark_case_status(session_id, mode, image_id, "opened", needs_recheck=False)
+        deleted = delete_response(session_id, mode, image_id, model_key)
+        mark_case_status(session_id, status_mode, image_id, "opened", needs_recheck=False)
         log_event(
             "clear_response",
             {
                 **doctor,
                 "mode": mode,
+                "dinomaly_model": model_key if mode in METHOD_MODES else "",
                 "image_id": image_id,
                 "case_number": index + 1,
                 "deleted": deleted,
-                "answered_count": len(answered_ids(session_id, mode)),
-                "total_cases": len(test_names()),
+                "answered_count": len(answered_ids(session_id, mode, model_key)),
+                "total_cases": len(test_names(model_key)),
             },
         )
         return redirect(
             url_for(
                 "review",
                 mode=mode,
+                model=model_key,
                 top_k=top_k,
                 min_votes=min_votes,
                 index=index,
             )
         )
 
-    retrieved = retrieval_rows(index, top_k) if mode in METHOD_MODES else []
+    retrieved = retrieval_rows(index, top_k, model_key) if mode in METHOD_MODES else []
     prediction = {"predicted": [], "evidence": []}
     if mode in METHOD_MODES:
         prediction_min_votes = DINOMALY_PREDICTION_MIN_VOTES
@@ -1645,6 +1755,7 @@ def save() -> Response:
         **doctor,
         "contact_key": normalize_contact(doctor.get("contact", "")),
         "mode": mode,
+        "dinomaly_model": model_key if mode in METHOD_MODES else "",
         "case_number": index + 1,
         "image_id": image_id,
         "patient_id": "" if row is None else int(row["patient_id"]),
@@ -1666,12 +1777,13 @@ def save() -> Response:
         "true_disease_category": "" if row is None else str(row["disease_category"]),
     }
     upsert_response(response)
-    mark_case_status(session_id, mode, image_id, "saved", needs_recheck=needs_recheck)
-    updated_answered = answered_ids(session_id, mode)
-    log_event("save_response", {**doctor, "mode": mode, "case_number": index + 1, "image_id": image_id, "answered_count": len(updated_answered), "total_cases": len(test_names())})
-    if len(updated_answered) == len(test_names()):
-        log_event("complete_session", {**doctor, "mode": mode, "answered_count": len(updated_answered), "total_cases": len(test_names())})
-    return redirect(url_for("review", mode=mode, top_k=top_k, min_votes=min_votes, index=next_unanswered(updated_answered, index + 1)))
+    mark_case_status(session_id, status_mode, image_id, "saved", needs_recheck=needs_recheck)
+    updated_answered = answered_ids(session_id, mode, model_key)
+    total_cases = len(test_names(model_key))
+    log_event("save_response", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "case_number": index + 1, "image_id": image_id, "answered_count": len(updated_answered), "total_cases": total_cases})
+    if len(updated_answered) == total_cases:
+        log_event("complete_session", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "answered_count": len(updated_answered), "total_cases": total_cases})
+    return redirect(url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=next_unanswered(updated_answered, index + 1, model_key=model_key)))
 
 
 @app.get("/scan/<image_id>")
@@ -1688,33 +1800,36 @@ def scan_image(image_id: str) -> Response:
 
 @app.get("/anomaly/<image_id>")
 def anomaly_image(image_id: str) -> Response:
+    model_key = dinomaly_model_key(request.args.get("model"))
     return send_resolved_image(
-        resolve_image_path(image_id, [ANOMALY_DIR], recursive_dirs=[NORMAL_MODEL_DIR])
+        resolve_image_path(image_id, [model_anomaly_dir(model_key)], recursive_dirs=[model_dir(model_key)])
     )
 
 
 @app.get("/retrieval/<image_id>")
 def retrieval_image(image_id: str) -> Response:
+    model_key = dinomaly_model_key(request.args.get("model"))
     return send_resolved_image(
         resolve_image_path(
             image_id,
-            [RETRIEVAL_IMAGE_DIR, TEST_IMAGE_DIR],
-            recursive_dirs=[BRSET_DIR, NORMAL_MODEL_DIR],
+            [RETRIEVAL_IMAGE_DIR, model_test_image_dir(model_key)],
+            recursive_dirs=[BRSET_DIR, model_dir(model_key)],
         )
     )
 
 
 @app.get("/zoom/<kind>/<image_id>")
 def zoom_image(kind: str, image_id: str) -> str | Response:
+    model_key = dinomaly_model_key(request.args.get("model"))
     if kind == "scan":
         title = "Scan zoom"
         image_url = url_for("scan_image", image_id=image_id)
     elif kind == "anomaly":
         title = "Anomaly map zoom"
-        image_url = url_for("anomaly_image", image_id=image_id)
+        image_url = url_for("anomaly_image", image_id=image_id, model=model_key)
     elif kind == "retrieval":
         title = "Retrieved scan zoom"
-        image_url = url_for("retrieval_image", image_id=image_id)
+        image_url = url_for("retrieval_image", image_id=image_id, model=model_key)
     else:
         return Response("Unknown image type", status=404)
     return render_page(ZOOM_BODY, title=title, image_url=image_url)
@@ -1722,10 +1837,11 @@ def zoom_image(kind: str, image_id: str) -> str | Response:
 
 @app.get("/zoom/compare/<image_id>")
 def zoom_compare(image_id: str) -> str:
+    model_key = dinomaly_model_key(request.args.get("model"))
     return render_page(
         COMPARE_ZOOM_BODY,
         scan_url=url_for("scan_image", image_id=image_id),
-        anomaly_url=url_for("anomaly_image", image_id=image_id),
+        anomaly_url=url_for("anomaly_image", image_id=image_id, model=model_key),
     )
 
 

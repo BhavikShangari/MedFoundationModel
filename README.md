@@ -5,18 +5,16 @@ Flask application for the BRSET human review study with two modes:
 - Human only
 - Human + Dinomaly
 
-The app shows each test scan, patient age and gender, optional Dinomaly retrieval evidence, anomaly maps, and saves doctor assessments with per-selected-disease certainty levels.
+The app shows each test scan, patient age and gender, optional Dinomaly retrieval evidence, anomaly maps, and saves doctor assessments with per-selected-disease certainty levels. The assisted workflow supports Dinomaly-H and Dinomaly-HD result variants.
 
 ## Repository Contents
 
 - `brset_review_app.py` - Flask app used by Render and local runs.
 - `brset_ai_human/` - required dataset and retrieval artifacts:
   - `BRSET/fundus_photos/` original fundus images.
-  - `normal_model/original_img/` test case images.
-  - `normal_model/anomaly_scan/` anomaly maps.
-  - `normal_model/brset_normal_test_name.pkl`, `normal_model/brset_normal_train_name.pkl`.
-  - `normal_model/similarity_data.pkl`, `normal_model/indices_data.pkl`.
-  - `normal_model/brset_normal_*_feats.pt`, `normal_model/brset_normal_*_labels.pt`.
+  - `dinomaly_h/` Dinomaly-H artifacts trained using healthy images only.
+  - `dinomaly_hd/` Dinomaly-HD artifacts pretrained using healthy and diseased images.
+  - Each Dinomaly folder contains `original_img/`, `anomaly_scan/`, names, similarities, indices, features, and labels for that variant.
   - `brset_dataset_distribution.csv` metadata and labels.
 - `requirements.txt`, `Procfile`, `render.yaml` - deployment files.
 
