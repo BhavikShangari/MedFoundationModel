@@ -134,11 +134,13 @@ app.secret_key = os.environ.get("BRSET_REVIEW_SECRET_KEY", "brset-review-local-s
 
 
 class FlipBasedOnBrightness:
-    def __init__(self, patch_size: int = 50) -> None:
+    def __init__(self, patch_size: int = 16, decision_size: int = 256) -> None:
         self.patch_size = patch_size
+        self.decision_size = decision_size
 
     def __call__(self, image: Image.Image) -> Image.Image:
-        gray = image.convert("L")
+        decision_image = image.resize((self.decision_size, self.decision_size), resampling_filter())
+        gray = decision_image.convert("L")
         gray_np = np.array(gray)
         _, width = gray_np.shape
         patch_size = min(self.patch_size, width)
@@ -158,6 +160,10 @@ class FlipBasedOnBrightness:
 
 
 query_image_transform = FlipBasedOnBrightness()
+
+
+def resampling_filter() -> Any:
+    return getattr(getattr(Image, "Resampling", Image), "BILINEAR")
 
 
 def normalize_image_id(value: Any) -> str:
@@ -602,7 +608,7 @@ def send_resolved_image(path: Path | None) -> Response:
     return send_file(path)
 
 
-def send_transformed_query_image(path: Path | None) -> Response:
+def send_transformed_query_image(path: Path | None, image_id: str | None = None) -> Response:
     if path is None:
         return missing_svg()
     image = Image.open(path).convert("RGB")
@@ -610,7 +616,9 @@ def send_transformed_query_image(path: Path | None) -> Response:
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=95)
     buffer.seek(0)
-    return send_file(buffer, mimetype="image/jpeg")
+    response = send_file(buffer, mimetype="image/jpeg")
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 CSS = """
@@ -1672,7 +1680,8 @@ def scan_image(image_id: str) -> Response:
             image_id,
             [RETRIEVAL_IMAGE_DIR],
             recursive_dirs=[BRSET_DIR],
-        )
+        ),
+        image_id=image_id,
     )
 
 
