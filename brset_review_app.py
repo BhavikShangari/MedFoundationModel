@@ -46,6 +46,8 @@ def assessment_field_name(label: str) -> str:
 
 
 def parse_assessment_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
     text = str(value or "").strip()
     if not text:
         return []
@@ -57,6 +59,14 @@ def parse_assessment_list(value: Any) -> list[str]:
         except json.JSONDecodeError:
             pass
     return [item for item in text.split(";") if item]
+
+
+def truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 RESPONSE_FIELDS = [
@@ -140,6 +150,7 @@ METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
 RESPONSES_CSV = ROOT / "doctor_review_responses.csv"
+RESPONSES_JSONL = ROOT / "doctor_review_responses.jsonl"
 SESSION_LOG_CSV = ROOT / "doctor_review_session_log.csv"
 SESSIONS_JSON = ROOT / "doctor_review_sessions.json"
 CASE_STATUS_JSON = ROOT / "doctor_review_case_status.json"
@@ -358,6 +369,41 @@ def write_csv_rows(path: Path, rows: list[dict[str, Any]], preferred_fields: lis
         )
 
 
+def read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                loaded = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSONL in {path} at line {line_number}") from exc
+            if isinstance(loaded, dict):
+                rows.append(loaded)
+    return rows
+
+
+def write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def read_response_rows() -> list[dict[str, Any]]:
+    if RESPONSES_JSONL.exists():
+        return read_jsonl_rows(RESPONSES_JSONL)
+    return read_csv_rows(RESPONSES_CSV)
+
+
+def write_response_rows(rows: list[dict[str, Any]]) -> None:
+    write_jsonl_rows(RESPONSES_JSONL, rows)
+
+
 def load_sessions() -> dict[str, dict[str, Any]]:
     if not SESSIONS_JSON.exists():
         return {}
@@ -523,7 +569,7 @@ def answered_ids(session_id: str, mode: str, model_key: str = DEFAULT_DINOMALY_M
     expected_model = dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else ""
     return {
         normalize_image_id(row["image_id"])
-        for row in read_csv_rows(RESPONSES_CSV)
+        for row in read_response_rows()
         if (row.get("reviewer_session_uid") or row.get("session_id")) == session_id
         and row.get("mode") == mode
         and response_model_key(row) == expected_model
@@ -532,7 +578,7 @@ def answered_ids(session_id: str, mode: str, model_key: str = DEFAULT_DINOMALY_M
 
 def saved_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> dict[str, str] | None:
     key = (session_id, mode, dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else "", normalize_image_id(image_id))
-    for row in reversed(read_csv_rows(RESPONSES_CSV)):
+    for row in reversed(read_response_rows()):
         if response_key(row) == key:
             return row
     return None
@@ -605,6 +651,11 @@ def certainty_from_numeric(value: Any) -> str:
 def disease_certainties_from_response(previous: dict[str, str]) -> dict[str, str]:
     defaults = {disease: "high" for disease in ASSESSMENT_OPTIONS}
     raw = previous.get("selected_disease_certainty_json", "")
+    if isinstance(raw, dict):
+        for disease, certainty in raw.items():
+            if disease in defaults and certainty in CERTAINTY_LEVELS:
+                defaults[disease] = certainty
+        return defaults
     if raw:
         try:
             loaded = json.loads(raw)
@@ -634,20 +685,20 @@ def disease_certainties_from_response(previous: dict[str, str]) -> dict[str, str
 
 
 def upsert_response(response: dict[str, Any]) -> None:
-    rows = read_csv_rows(RESPONSES_CSV)
+    rows = read_response_rows()
     key = response_key(response)
     rows = [row for row in rows if response_key(row) != key]
     rows.append(response)
-    write_csv_rows(RESPONSES_CSV, rows, RESPONSE_FIELDS)
+    write_response_rows(rows)
 
 
 def delete_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> bool:
-    rows = read_csv_rows(RESPONSES_CSV)
+    rows = read_response_rows()
     key = (session_id, mode, dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else "", normalize_image_id(image_id))
     kept = [row for row in rows if response_key(row) != key]
     deleted = len(kept) != len(rows)
     if rows:
-        write_csv_rows(RESPONSES_CSV, kept, RESPONSE_FIELDS)
+        write_response_rows(kept)
     return deleted
 
 
@@ -1619,9 +1670,9 @@ def review() -> str | Response:
         for disease in parse_assessment_list(previous.get("doctor_selected_diseases", ""))
         if disease in ASSESSMENT_OPTIONS
     ]
-    if previous.get("doctor_selected_no_disease") in {"1", "True", "true"}:
+    if truthy(previous.get("doctor_selected_no_disease")):
         previous_diseases.insert(0, NO_DISEASE_OPTION)
-    needs_recheck = previous.get("needs_recheck") in {"1", "True", "true"} or needs_recheck_for(session_id, status_mode, image_id)
+    needs_recheck = truthy(previous.get("needs_recheck")) or needs_recheck_for(session_id, status_mode, image_id)
 
     previous_url = url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=max(0, index - 1))
     next_url = url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=min(total_cases - 1, index + 1))
@@ -1755,20 +1806,20 @@ def save() -> Response:
         "case_number": index + 1,
         "image_id": image_id,
         "patient_id": "" if row is None else int(row["patient_id"]),
-        "doctor_selected_no_disease": int(NO_DISEASE_OPTION in selected),
-        "doctor_selected_diseases": json.dumps(selected_diseases, sort_keys=True),
+        "doctor_selected_no_disease": NO_DISEASE_OPTION in selected,
+        "doctor_selected_diseases": selected_diseases,
         "doctor_selected_count": len(selected),
-        "needs_recheck": int(needs_recheck),
-        "selected_disease_certainty_json": json.dumps(selected_disease_certainties, sort_keys=True),
+        "needs_recheck": needs_recheck,
+        "selected_disease_certainty_json": selected_disease_certainties,
         "review_time_seconds": review_time_seconds,
         "comments": form.get("comments", ""),
-        "dinomaly_predicted_diseases": json.dumps(prediction["predicted"], sort_keys=True),
-        "dinomaly_vote_counts_json": json.dumps(vote_counts, sort_keys=True),
-        "dinomaly_evidence_json": json.dumps(dinomaly_evidence, sort_keys=True),
-        "retrieved_image_ids": json.dumps([item["image_id"] for item in retrieved], sort_keys=True),
-        "retrieved_similarities": json.dumps([round(float(item["similarity"]), 6) for item in retrieved], sort_keys=True),
-        "retrieved_diseases_json": json.dumps({item["image_id"]: item["diseases"] for item in retrieved}, sort_keys=True),
-        "true_diseases_hidden_from_reviewer": json.dumps(true_diseases, sort_keys=True),
+        "dinomaly_predicted_diseases": prediction["predicted"],
+        "dinomaly_vote_counts_json": vote_counts,
+        "dinomaly_evidence_json": dinomaly_evidence,
+        "retrieved_image_ids": [item["image_id"] for item in retrieved],
+        "retrieved_similarities": [round(float(item["similarity"]), 6) for item in retrieved],
+        "retrieved_diseases_json": {item["image_id"]: item["diseases"] for item in retrieved},
+        "true_diseases_hidden_from_reviewer": true_diseases,
         "true_disease_count": "" if row is None else int(row["disease_count"]),
         "true_disease_category": "" if row is None else str(row["disease_category"]),
     }

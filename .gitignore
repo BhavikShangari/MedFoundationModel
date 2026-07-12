@@ -11,10 +11,12 @@ env/
 
 # Runtime review state. These are created by the app and should not be committed.
 doctor_review_responses.csv
+doctor_review_responses.jsonl
 doctor_review_session_log.csv
 doctor_review_sessions.json
 doctor_review_case_status.json
 doctor_review_responses.local.csv
+doctor_review_responses.local.jsonl
 doctor_review_session_log.local.csv
 doctor_review_sessions.local.json
 doctor_review_case_status.local.json
