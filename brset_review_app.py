@@ -35,6 +35,7 @@ DISEASE_COLUMNS = [
 NO_DISEASE_OPTION = "No Disease"
 ASSESSMENT_OPTIONS = [NO_DISEASE_OPTION, *DISEASE_COLUMNS]
 METHOD_MODES = {"combined"}
+MODEL_SCOPED_MODES = {"human", "combined"}
 DINOMALY_RETRIEVAL_COUNT = 5
 DINOMALY_PREDICTION_MIN_VOTES = 3
 CERTAINTY_LEVELS = ("low", "medium", "high")
@@ -223,7 +224,7 @@ def model_anomaly_dir(model_key: Any = None) -> Path:
 
 
 def scoped_mode(mode: str, model_key: Any = None) -> str:
-    if mode in METHOD_MODES:
+    if mode in MODEL_SCOPED_MODES:
         return f"{mode}:{dinomaly_model_key(model_key)}"
     return mode
 
@@ -509,7 +510,7 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
 
 
 def response_model_key(row: dict[str, Any]) -> str:
-    return dinomaly_model_key(row.get("dinomaly_model")) if row.get("mode") in METHOD_MODES else ""
+    return dinomaly_model_key(row.get("dinomaly_model")) if row.get("mode") in MODEL_SCOPED_MODES else ""
 
 
 def response_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -519,7 +520,7 @@ def response_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def answered_ids(session_id: str, mode: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> set[str]:
-    expected_model = dinomaly_model_key(model_key) if mode in METHOD_MODES else ""
+    expected_model = dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else ""
     return {
         normalize_image_id(row["image_id"])
         for row in read_csv_rows(RESPONSES_CSV)
@@ -530,7 +531,7 @@ def answered_ids(session_id: str, mode: str, model_key: str = DEFAULT_DINOMALY_M
 
 
 def saved_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> dict[str, str] | None:
-    key = (session_id, mode, dinomaly_model_key(model_key) if mode in METHOD_MODES else "", normalize_image_id(image_id))
+    key = (session_id, mode, dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else "", normalize_image_id(image_id))
     for row in reversed(read_csv_rows(RESPONSES_CSV)):
         if response_key(row) == key:
             return row
@@ -642,7 +643,7 @@ def upsert_response(response: dict[str, Any]) -> None:
 
 def delete_response(session_id: str, mode: str, image_id: str, model_key: str = DEFAULT_DINOMALY_MODEL) -> bool:
     rows = read_csv_rows(RESPONSES_CSV)
-    key = (session_id, mode, dinomaly_model_key(model_key) if mode in METHOD_MODES else "", normalize_image_id(image_id))
+    key = (session_id, mode, dinomaly_model_key(model_key) if mode in MODEL_SCOPED_MODES else "", normalize_image_id(image_id))
     kept = [row for row in rows if response_key(row) != key]
     deleted = len(kept) != len(rows)
     if rows:
@@ -737,7 +738,28 @@ a { color: inherit; text-decoration: none; }
 }
 .metric-label { color: var(--muted); font-size: 12px; }
 .metric-value { font-weight: 760; font-size: 16px; margin-top: 2px; }
-.mode-list { display: grid; gap: 8px; margin: 10px 0 18px; }
+.review-nav { display: grid; gap: 14px; margin: 12px 0 18px; }
+.model-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+.model-group.active {
+  border-color: #9fd7cf;
+  box-shadow: 0 0 0 2px rgba(20, 143, 119, 0.08);
+}
+.model-heading {
+  display: grid;
+  gap: 3px;
+  padding: 2px 2px 9px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 9px;
+}
+.model-heading span { font-size: 14px; font-weight: 800; color: #0f172a; }
+.model-heading small { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.model-group.active .model-heading span { color: #075e56; }
+.mode-list { display: grid; gap: 8px; margin: 0; }
 .mode-link {
   display: block;
   border: 1px solid var(--line);
@@ -753,24 +775,6 @@ a { color: inherit; text-decoration: none; }
   color: #075e56;
   font-weight: 700;
 }
-.model-list { display: grid; gap: 8px; margin: 10px 0 18px; }
-.model-link {
-  display: grid;
-  gap: 3px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 11px;
-  background: #ffffff;
-  color: #334155;
-}
-.model-link span { font-size: 14px; font-weight: 760; }
-.model-link small { color: var(--muted); font-size: 12px; line-height: 1.25; }
-.model-link.active {
-  border-color: #9fd7cf;
-  background: var(--accent-soft);
-  color: #075e56;
-}
-.model-link.active small { color: #0f766e; }
 .case-board {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -1247,24 +1251,22 @@ REVIEW_BODY = """
   <aside class="sidebar">
     <div class="brand">BRSET Review</div>
     <div class="brand-sub">{{ doctor.doctor_name }} | {{ doctor.designation }}</div>
-    <div class="mode-list">
-      {% for key, label in mode_labels.items() %}
-      <a class="mode-link {% if key == mode %}active{% endif %}"
-         href="{{ url_for('review', mode=key, model=model_key) }}">{{ label }}</a>
+    <div class="review-nav">
+      {% for model_option, config in dinomaly_models.items() %}
+      <section class="model-group {% if model_option == model_key %}active{% endif %}">
+        <div class="model-heading">
+          <span>{{ config.label }}</span>
+          <small>{{ config.training }}</small>
+        </div>
+        <div class="mode-list">
+          {% for key, label in mode_labels.items() %}
+          <a class="mode-link {% if key == mode and model_option == model_key %}active{% endif %}"
+             href="{{ url_for('review', mode=key, model=model_option) }}">{{ label }}</a>
+          {% endfor %}
+        </div>
+      </section>
       {% endfor %}
     </div>
-    {% if mode == "combined" %}
-    <div class="panel-title">Dinomaly variant</div>
-    <div class="model-list">
-      {% for key, config in dinomaly_models.items() %}
-      <a class="model-link {% if key == model_key %}active{% endif %}"
-         href="{{ url_for('review', mode=mode, model=key, index=index) }}">
-        <span>{{ config.label }}</span>
-        <small>{{ config.training }}</small>
-      </a>
-      {% endfor %}
-    </div>
-    {% endif %}
     <div class="panel-title">Cases</div>
     <div class="case-board">
       {% for case in case_cells %}
@@ -1294,7 +1296,7 @@ REVIEW_BODY = """
     <div class="case-header">
       <div>
         <div class="case-title">Case {{ index + 1 }} of {{ total_cases }}</div>
-        <div class="case-meta">{{ mode_label }}{% if mode == "combined" %} | {{ model_label }}{% endif %} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
+        <div class="case-meta">{{ model_label }} | {{ mode_label }} | {{ doctor.doctor_name }} | Age {{ patient_demo.age }} | {{ patient_demo.gender }}</div>
       </div>
       <div class="timer-box">
         <div class="timer-label">Review time</div>
@@ -1517,8 +1519,6 @@ def start() -> str | Response:
     if mode not in MODE_LABELS:
         mode = "human"
     model_key = dinomaly_model_key(form.get("dinomaly_model") or form.get("model"))
-    if mode not in METHOD_MODES:
-        model_key = DEFAULT_DINOMALY_MODEL
     action = form.get("session_action", "check")
     existing_match = latest_matching_session(sessions, form.get("contact", ""))
 
@@ -1574,7 +1574,7 @@ def start() -> str | Response:
     browser_session["review_session_id"] = session_id
     browser_session.pop("pending_resume_session_id", None)
     answered = answered_ids(session_id, mode, model_key)
-    log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
+    log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
     return redirect(url_for("review", mode=mode, model=model_key, index=next_unanswered(answered, model_key=model_key)))
 
 
@@ -1593,8 +1593,6 @@ def review() -> str | Response:
     if mode not in MODE_LABELS:
         mode = "human"
     model_key = dinomaly_model_key(request.args.get("model"))
-    if mode not in METHOD_MODES:
-        model_key = DEFAULT_DINOMALY_MODEL
     status_mode = scoped_mode(mode, model_key)
     names = test_names(model_key)
     total_cases = len(names)
@@ -1673,8 +1671,6 @@ def save() -> Response:
         return redirect(url_for("profile"))
     mode = form["mode"]
     model_key = dinomaly_model_key(form.get("dinomaly_model"))
-    if mode not in METHOD_MODES:
-        model_key = DEFAULT_DINOMALY_MODEL
     status_mode = scoped_mode(mode, model_key)
     index = int(form["index"])
     image_id = normalize_image_id(form["image_id"])
@@ -1694,7 +1690,7 @@ def save() -> Response:
             {
                 **doctor,
                 "mode": mode,
-                "dinomaly_model": model_key if mode in METHOD_MODES else "",
+                "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "",
                 "image_id": image_id,
                 "case_number": index + 1,
                 "deleted": deleted,
@@ -1755,7 +1751,7 @@ def save() -> Response:
         **doctor,
         "contact_key": normalize_contact(doctor.get("contact", "")),
         "mode": mode,
-        "dinomaly_model": model_key if mode in METHOD_MODES else "",
+        "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "",
         "case_number": index + 1,
         "image_id": image_id,
         "patient_id": "" if row is None else int(row["patient_id"]),
@@ -1780,9 +1776,9 @@ def save() -> Response:
     mark_case_status(session_id, status_mode, image_id, "saved", needs_recheck=needs_recheck)
     updated_answered = answered_ids(session_id, mode, model_key)
     total_cases = len(test_names(model_key))
-    log_event("save_response", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "case_number": index + 1, "image_id": image_id, "answered_count": len(updated_answered), "total_cases": total_cases})
+    log_event("save_response", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "case_number": index + 1, "image_id": image_id, "answered_count": len(updated_answered), "total_cases": total_cases})
     if len(updated_answered) == total_cases:
-        log_event("complete_session", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in METHOD_MODES else "", "answered_count": len(updated_answered), "total_cases": total_cases})
+        log_event("complete_session", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(updated_answered), "total_cases": total_cases})
     return redirect(url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=next_unanswered(updated_answered, index + 1, model_key=model_key)))
 
 
