@@ -348,7 +348,7 @@ def write_csv_rows(path: Path, rows: list[dict[str, Any]], preferred_fields: lis
                 if key not in fields:
                     fields.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, quoting=csv.QUOTE_ALL)
         writer.writeheader()
         writer.writerows(
             [
@@ -1762,13 +1762,13 @@ def save() -> Response:
         "selected_disease_certainty_json": json.dumps(selected_disease_certainties, sort_keys=True),
         "review_time_seconds": review_time_seconds,
         "comments": form.get("comments", ""),
-        "dinomaly_predicted_diseases": ";".join(prediction["predicted"]),
+        "dinomaly_predicted_diseases": json.dumps(prediction["predicted"], sort_keys=True),
         "dinomaly_vote_counts_json": json.dumps(vote_counts, sort_keys=True),
         "dinomaly_evidence_json": json.dumps(dinomaly_evidence, sort_keys=True),
-        "retrieved_image_ids": ";".join(item["image_id"] for item in retrieved),
-        "retrieved_similarities": ";".join(f"{item['similarity']:.6f}" for item in retrieved),
+        "retrieved_image_ids": json.dumps([item["image_id"] for item in retrieved], sort_keys=True),
+        "retrieved_similarities": json.dumps([round(float(item["similarity"]), 6) for item in retrieved], sort_keys=True),
         "retrieved_diseases_json": json.dumps({item["image_id"]: item["diseases"] for item in retrieved}, sort_keys=True),
-        "true_diseases_hidden_from_reviewer": ";".join(true_diseases),
+        "true_diseases_hidden_from_reviewer": json.dumps(true_diseases, sort_keys=True),
         "true_disease_count": "" if row is None else int(row["disease_count"]),
         "true_disease_category": "" if row is None else str(row["disease_category"]),
     }
