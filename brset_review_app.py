@@ -1352,6 +1352,9 @@ textarea { min-height: 96px; resize: vertical; }
   object-fit: contain;
   border-radius: 8px;
 }
+@media (max-width: 1380px) {
+  .workspace { grid-template-columns: 1fr; }
+}
 @media (max-width: 1100px) {
   .shell { display: flex; flex-direction: column; }
   .main { order: 1; }
