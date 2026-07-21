@@ -1353,8 +1353,15 @@ textarea { min-height: 96px; resize: vertical; }
   border-radius: 8px;
 }
 @media (max-width: 1100px) {
-  .shell { grid-template-columns: 1fr; }
-  .sidebar { position: relative; height: auto; }
+  .shell { display: flex; flex-direction: column; }
+  .main { order: 1; }
+  .sidebar {
+    order: 2;
+    position: relative;
+    height: auto;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+  }
   .case-header { align-items: flex-start; flex-wrap: wrap; }
   .timer-box { text-align: left; }
   .workspace, .evidence-grid, .profile-grid, .arm-status-grid, .zoom-compare { grid-template-columns: 1fr; }
