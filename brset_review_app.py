@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pickle
+import random
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -146,6 +147,20 @@ DINOMALY_MODELS = {
     },
 }
 
+ARM_OPTIONS = [
+    {
+        "key": f"{model_key}:{mode}",
+        "model_key": model_key,
+        "mode": mode,
+        "label": f"{config['label']} / {MODE_LABELS[mode]}",
+        "model_label": config["label"],
+        "mode_label": MODE_LABELS[mode],
+        "training": config["training"],
+    }
+    for model_key, config in DINOMALY_MODELS.items()
+    for mode in MODE_LABELS
+]
+
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
@@ -211,6 +226,32 @@ def load_pickle(path: Path) -> Any:
 def dinomaly_model_key(value: Any = None) -> str:
     key = str(value or DEFAULT_DINOMALY_MODEL)
     return key if key in DINOMALY_MODELS else DEFAULT_DINOMALY_MODEL
+
+
+def arm_key(model_key: Any, mode: Any) -> str:
+    mode_key = str(mode or "human")
+    if mode_key not in MODE_LABELS:
+        mode_key = "human"
+    return f"{dinomaly_model_key(model_key)}:{mode_key}"
+
+
+def parse_arm_key(value: Any) -> tuple[str, str]:
+    text = str(value or "")
+    if ":" in text:
+        model_part, mode_part = text.split(":", 1)
+    else:
+        model_part, mode_part = DEFAULT_DINOMALY_MODEL, text
+    model_key = dinomaly_model_key(model_part)
+    mode = mode_part if mode_part in MODE_LABELS else "human"
+    return model_key, mode
+
+
+def arm_label(model_key: Any, mode: Any) -> str:
+    model_key = dinomaly_model_key(model_key)
+    mode = str(mode or "human")
+    if mode not in MODE_LABELS:
+        mode = "human"
+    return f"{DINOMALY_MODELS[model_key]['label']} / {MODE_LABELS[mode]}"
 
 
 def model_config(model_key: Any = None) -> dict[str, Any]:
@@ -477,6 +518,16 @@ def normalize_contact(value: Any) -> str:
 def session_profile_from_form(form: Any, session_id: str, existing: dict[str, Any] | None = None) -> dict[str, Any]:
     existing = existing or {}
     contact = form.get("contact", "")
+    model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
+    total_cases = len(test_names(model_key))
+    start_index = existing.get("start_index")
+    if start_index in {"", None}:
+        start_index = random.randrange(total_cases) if total_cases else 0
+    else:
+        try:
+            start_index = int(start_index)
+        except (TypeError, ValueError):
+            start_index = 0
     return {
         "doctor_name": form.get("doctor_name", ""),
         "designation": form.get("designation", ""),
@@ -488,6 +539,11 @@ def session_profile_from_form(form: Any, session_id: str, existing: dict[str, An
         "contact": contact,
         "contact_key": normalize_contact(contact),
         "session_id": session_id,
+        "mode": mode,
+        "dinomaly_model": model_key,
+        "review_arm": arm_key(model_key, mode),
+        "review_arm_label": arm_label(model_key, mode),
+        "start_index": start_index,
         "session_notes": form.get("session_notes", ""),
         "created_at": existing.get("created_at", existing.get("updated_at", now())),
         "updated_at": now(),
@@ -509,8 +565,73 @@ def latest_matching_session(sessions: dict[str, dict[str, Any]], contact: str) -
     return matches[0]
 
 
-def session_progress(session_id: str) -> dict[str, int]:
-    return {mode: len(answered_ids(session_id, mode)) for mode in MODE_LABELS}
+def matching_sessions_for_contact(sessions: dict[str, dict[str, Any]], contact: str) -> list[tuple[str, dict[str, Any]]]:
+    contact_key = normalize_contact(contact)
+    if not contact_key:
+        return []
+    matches = [
+        (session_id, data)
+        for session_id, data in sessions.items()
+        if normalize_contact(data.get("contact_key") or data.get("contact")) == contact_key
+    ]
+    matches.sort(key=lambda item: (str(item[1].get("updated_at", "")), item[0]), reverse=True)
+    return matches
+
+
+def session_arm(data: dict[str, Any]) -> tuple[str, str]:
+    return parse_arm_key(data.get("review_arm") or arm_key(data.get("dinomaly_model"), data.get("mode")))
+
+
+def latest_matching_arm_session(
+    sessions: dict[str, dict[str, Any]],
+    contact: str,
+    model_key: str,
+    mode: str,
+) -> tuple[str, dict[str, Any]] | None:
+    requested_arm = arm_key(model_key, mode)
+    for session_id, data in matching_sessions_for_contact(sessions, contact):
+        existing_model, existing_mode = session_arm(data)
+        if arm_key(existing_model, existing_mode) == requested_arm:
+            return session_id, data
+    return None
+
+
+def session_progress(session_id: str, model_key: str | None = None, mode: str | None = None) -> dict[str, int] | int:
+    if model_key is not None and mode is not None:
+        return len(answered_ids(session_id, mode, model_key))
+    return {
+        option["key"]: len(answered_ids(session_id, option["mode"], option["model_key"]))
+        for option in ARM_OPTIONS
+    }
+
+
+def contact_arm_progress(sessions: dict[str, dict[str, Any]], contact: str) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for option in ARM_OPTIONS:
+        match = latest_matching_arm_session(sessions, contact, option["model_key"], option["mode"])
+        session_id = match[0] if match else ""
+        answered = len(answered_ids(session_id, option["mode"], option["model_key"])) if session_id else 0
+        total = len(test_names(option["model_key"]))
+        if answered >= total and total > 0:
+            status = "completed"
+            status_label = "Completed"
+        elif answered > 0:
+            status = "partial"
+            status_label = "Partial"
+        else:
+            status = "not-started"
+            status_label = "Not started"
+        cards.append(
+            {
+                **option,
+                "session_id": session_id,
+                "answered": answered,
+                "total": total,
+                "status": status,
+                "status_label": status_label,
+            }
+        )
+    return cards
 
 
 def active_session_id() -> str:
@@ -520,7 +641,13 @@ def active_session_id() -> str:
 def log_event(event: str, payload: dict[str, Any]) -> None:
     rows = read_csv_rows(SESSION_LOG_CSV)
     session_id = str(payload.get("session_id") or payload.get("reviewer_session_uid") or "")
-    progress = session_progress(session_id) if session_id else {}
+    mode = payload.get("mode", "")
+    model_key = payload.get("dinomaly_model", DEFAULT_DINOMALY_MODEL)
+    answered_for_arm = (
+        session_progress(session_id, dinomaly_model_key(model_key), mode)
+        if session_id and mode in MODE_LABELS
+        else payload.get("answered_count", "")
+    )
     detail_keys = {"deleted", "session_action"}
     if event in {"start_session", "resume_session"}:
         detail_keys |= {
@@ -531,6 +658,9 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
             "posting_location",
             "registration_id",
             "session_notes",
+            "review_arm",
+            "review_arm_label",
+            "start_index",
             "created_at",
             "updated_at",
         }
@@ -541,13 +671,13 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
         "reviewer_session_uid": session_id,
         "doctor_name": payload.get("doctor_name", ""),
         "contact": payload.get("contact", ""),
-        "mode": payload.get("mode", ""),
+        "mode": mode,
         "dinomaly_model": payload.get("dinomaly_model", ""),
         "case_number": payload.get("case_number", ""),
         "image_id": payload.get("image_id", ""),
-        "answered_human": progress.get("human", payload.get("answered_human", "")),
+        "answered_human": answered_for_arm if mode == "human" else payload.get("answered_human", ""),
         "answered_dinomaly": payload.get("answered_dinomaly", ""),
-        "answered_combined": progress.get("combined", payload.get("answered_combined", "")),
+        "answered_combined": answered_for_arm if mode == "combined" else payload.get("answered_combined", ""),
         "total_cases": payload.get("total_cases", len(test_names())),
         "details_json": json.dumps(details, sort_keys=True),
     }
@@ -826,6 +956,23 @@ a { color: inherit; text-decoration: none; }
   color: #075e56;
   font-weight: 700;
 }
+.locked-arm {
+  border: 1px solid #9fd7cf;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  padding: 12px;
+  margin: 12px 0 18px;
+}
+.locked-label {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.locked-title { color: #075e56; font-size: 15px; font-weight: 820; }
+.locked-subtitle { color: #0f766e; font-size: 12px; margin-top: 3px; line-height: 1.35; }
 .case-board {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -1099,6 +1246,22 @@ textarea { min-height: 96px; resize: vertical; }
 .profile-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
 .profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
 .span-2 { grid-column: span 2; }
+.arm-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 18px; }
+.arm-status-card {
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+.arm-status-card.completed { border-color: #22c55e; background: #f0fdf4; }
+.arm-status-card.partial { border-color: #f59e0b; background: #fffbeb; }
+.arm-status-card.not-started { border-color: #ef4444; background: #fef2f2; }
+.arm-status-title { font-size: 14px; font-weight: 800; color: #17202a; }
+.arm-status-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.arm-status-value { margin-top: 9px; font-size: 13px; font-weight: 800; }
+.arm-status-card.completed .arm-status-value { color: #15803d; }
+.arm-status-card.partial .arm-status-value { color: #b45309; }
+.arm-status-card.not-started .arm-status-value { color: #b91c1c; }
 .zoom-page {
   min-height: 100vh;
   padding: 20px;
@@ -1159,7 +1322,7 @@ textarea { min-height: 96px; resize: vertical; }
   .sidebar { position: relative; height: auto; }
   .case-header { align-items: flex-start; flex-wrap: wrap; }
   .timer-box { text-align: left; }
-  .workspace, .evidence-grid, .profile-grid, .zoom-compare { grid-template-columns: 1fr; }
+  .workspace, .evidence-grid, .profile-grid, .arm-status-grid, .zoom-compare { grid-template-columns: 1fr; }
   .span-2 { grid-column: span 1; }
 }
 """
@@ -1247,12 +1410,13 @@ PROFILE_BODY = """
         <input name="contact" type="email" required>
         <div class="help-text">(Use the same email to continue sessions.)</div>
       </div>
-      <div class="field"><label>Initial mode</label>
-        <select name="mode">
-          {% for key, label in mode_labels.items() %}
-          <option value="{{ key }}">{{ label }}</option>
+      <div class="field"><label>Review arm</label>
+        <select name="review_arm">
+          {% for option in arm_options %}
+          <option value="{{ option.key }}">{{ option.label }}</option>
           {% endfor %}
         </select>
+        <div class="help-text">This arm is locked once the review starts.</div>
       </div>
       <div class="field span-2"><label>Session notes</label><textarea name="session_notes"></textarea></div>
     </div>
@@ -1277,19 +1441,24 @@ RESUME_BODY = """
       <div class="metric"><div class="metric-label">Hospital</div><div class="metric-value">{{ existing.hospital_name }}</div></div>
       <div class="metric"><div class="metric-label">Last updated</div><div class="metric-value">{{ existing.updated_at }}</div></div>
     </div>
-    <div class="panel-title">Saved cases</div>
-    <div class="metrics" style="margin-bottom:16px;">
-      {% for key, label in mode_labels.items() %}
-      <div class="metric"><div class="metric-label">{{ label }}</div><div class="metric-value">{{ progress[key] }} / {{ total_cases }}</div></div>
+    <div class="panel-title">Review arm status for this email</div>
+    <div class="arm-status-grid">
+      {% for arm in arm_progress %}
+      <div class="arm-status-card {{ arm.status }}">
+        <div class="arm-status-title">{{ arm.label }}</div>
+        <div class="arm-status-meta">{{ arm.training }}</div>
+        <div class="arm-status-value">{{ arm.status_label }} - {{ arm.answered }} / {{ arm.total }}</div>
+      </div>
       {% endfor %}
     </div>
+    <div class="note">Selected arm: <strong>{{ selected_arm.label }}</strong>. This choice stays locked during the review.</div>
 
     {% for key, value in submitted.items() %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
     {% endfor %}
 
     <div class="actions">
-      <button class="btn" name="session_action" value="resume" type="submit">Continue older session</button>
+      <button class="btn" name="session_action" value="resume" type="submit">{{ primary_action_label }}</button>
       <button class="btn secondary" name="session_action" value="new" type="submit">Start new review</button>
     </div>
   </form>
@@ -1302,21 +1471,10 @@ REVIEW_BODY = """
   <aside class="sidebar">
     <div class="brand">BRSET Review</div>
     <div class="brand-sub">{{ doctor.doctor_name }} | {{ doctor.designation }}</div>
-    <div class="review-nav">
-      {% for model_option, config in dinomaly_models.items() %}
-      <section class="model-group {% if model_option == model_key %}active{% endif %}">
-        <div class="model-heading">
-          <span>{{ config.label }}</span>
-          <small>{{ config.training }}</small>
-        </div>
-        <div class="mode-list">
-          {% for key, label in mode_labels.items() %}
-          <a class="mode-link {% if key == mode and model_option == model_key %}active{% endif %}"
-             href="{{ url_for('review', mode=key, model=model_option) }}">{{ label }}</a>
-          {% endfor %}
-        </div>
-      </section>
-      {% endfor %}
+    <div class="locked-arm">
+      <div class="locked-label">Locked review arm</div>
+      <div class="locked-title">{{ model_label }}</div>
+      <div class="locked-subtitle">{{ mode_label }}<br>{{ model_training }}</div>
     </div>
     <div class="panel-title">Cases</div>
     <div class="case-board">
@@ -1558,7 +1716,7 @@ def case_cells_for(session_id: str, mode: str, current_index: int, model_key: st
 def profile() -> str:
     return render_page(
         PROFILE_BODY,
-        mode_labels=MODE_LABELS,
+        arm_options=ARM_OPTIONS,
     )
 
 
@@ -1566,16 +1724,18 @@ def profile() -> str:
 def start() -> str | Response:
     form = request.form
     sessions = load_sessions()
-    mode = form.get("mode", "human")
-    if mode not in MODE_LABELS:
-        mode = "human"
-    model_key = dinomaly_model_key(form.get("dinomaly_model") or form.get("model"))
+    model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     action = form.get("session_action", "check")
-    existing_match = latest_matching_session(sessions, form.get("contact", ""))
+    contact = form.get("contact", "")
+    existing_contact_match = latest_matching_session(sessions, contact)
+    selected_arm_match = latest_matching_arm_session(sessions, contact, model_key, mode)
 
-    if action == "check" and existing_match is not None:
-        existing_session_id, existing = existing_match
-        browser_session["pending_resume_session_id"] = existing_session_id
+    if action == "check" and existing_contact_match is not None:
+        existing_session_id, existing = selected_arm_match or existing_contact_match
+        if selected_arm_match:
+            browser_session["pending_resume_session_id"] = existing_session_id
+        else:
+            browser_session.pop("pending_resume_session_id", None)
         submitted = {
             key: form.get(key, "")
             for key in [
@@ -1587,31 +1747,37 @@ def start() -> str | Response:
                 "posting_location",
                 "registration_id",
                 "contact",
-                "mode",
+                "review_arm",
                 "session_notes",
             ]
         }
+        selected_option = next(option for option in ARM_OPTIONS if option["key"] == arm_key(model_key, mode))
+        arm_progress = contact_arm_progress(sessions, contact)
         log_event(
             "resume_prompt",
             {
                 **existing,
                 "mode": mode,
-                "answered_count": sum(session_progress(existing_session_id).values()),
-                "total_cases": len(test_names()),
+                "dinomaly_model": model_key,
+                "answered_count": len(answered_ids(existing_session_id, mode, model_key)) if selected_arm_match else 0,
+                "total_cases": len(test_names(model_key)),
             },
         )
         return render_page(
             RESUME_BODY,
             existing=existing,
             submitted=submitted,
-            progress=session_progress(existing_session_id),
-            total_cases=len(test_names()),
-            mode_labels=MODE_LABELS,
+            arm_progress=arm_progress,
+            selected_arm=selected_option,
+            primary_action_label="Continue selected arm" if selected_arm_match else "Start selected arm",
         )
 
     pending_resume_session_id = str(browser_session.get("pending_resume_session_id", ""))
     if action == "resume" and pending_resume_session_id in sessions:
         session_id = pending_resume_session_id
+        event = "resume_session"
+    elif action == "resume" and selected_arm_match is not None:
+        session_id = selected_arm_match[0]
         event = "resume_session"
     else:
         browser_session.pop("pending_resume_session_id", None)
@@ -1626,7 +1792,8 @@ def start() -> str | Response:
     browser_session.pop("pending_resume_session_id", None)
     answered = answered_ids(session_id, mode, model_key)
     log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
-    return redirect(url_for("review", mode=mode, model=model_key, index=next_unanswered(answered, model_key=model_key)))
+    start_index = int(sessions[session_id].get("start_index", 0) or 0)
+    return redirect(url_for("review", index=next_unanswered(answered, start_index, model_key=model_key)))
 
 
 @app.get("/review")
@@ -1640,10 +1807,10 @@ def review() -> str | Response:
     if not session_id or session_id not in sessions:
         return redirect(url_for("profile"))
 
-    mode = request.args.get("mode", "human")
-    if mode not in MODE_LABELS:
-        mode = "human"
-    model_key = dinomaly_model_key(request.args.get("model"))
+    session_profile = sessions[session_id]
+    session_model_key, session_mode = session_arm(session_profile)
+    model_key = session_model_key
+    mode = session_mode
     status_mode = scoped_mode(mode, model_key)
     names = test_names(model_key)
     total_cases = len(names)
@@ -1684,11 +1851,10 @@ def review() -> str | Response:
         mode=mode,
         model_key=model_key,
         model_label=model_config(model_key)["label"],
+        model_training=model_config(model_key)["training"],
         model_description=model_config(model_key)["description"],
-        dinomaly_models=DINOMALY_MODELS,
         mode_label=MODE_LABELS[mode],
         mode_short=mode_short,
-        mode_labels=MODE_LABELS,
         patient_demo=patient_demographics(row),
         index=index,
         image_id=image_id,
@@ -1720,8 +1886,10 @@ def save() -> Response:
     session_id = active_session_id()
     if not session_id:
         return redirect(url_for("profile"))
-    mode = form["mode"]
-    model_key = dinomaly_model_key(form.get("dinomaly_model"))
+    sessions = load_sessions()
+    if session_id not in sessions:
+        return redirect(url_for("profile"))
+    model_key, mode = session_arm(sessions[session_id])
     status_mode = scoped_mode(mode, model_key)
     index = int(form["index"])
     image_id = normalize_image_id(form["image_id"])
