@@ -1433,8 +1433,12 @@ PROFILE_BODY = """
       </div>
       <div class="field">
         <label>Review arm</label>
-        <input value="Assigned automatically on start" disabled>
-        <div class="help-text">The assigned arm is randomized for new reviews and locked after start.</div>
+        <select name="review_arm">
+          {% for option in arm_options %}
+          <option value="{{ option.key }}" {% if option.key == default_arm_key %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="help-text">A random arm is preselected. Change it here only if a specific arm is required.</div>
       </div>
       <div class="field span-2"><label>Session notes</label><textarea name="session_notes"></textarea></div>
     </div>
@@ -1732,9 +1736,11 @@ def case_cells_for(session_id: str, mode: str, current_index: int, model_key: st
 
 @app.get("/")
 def profile() -> str:
+    default_arm = random.choice(ARM_OPTIONS)
     return render_page(
         PROFILE_BODY,
         arm_options=ARM_OPTIONS,
+        default_arm_key=default_arm["key"],
     )
 
 
