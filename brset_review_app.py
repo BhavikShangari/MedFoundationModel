@@ -515,10 +515,19 @@ def normalize_contact(value: Any) -> str:
     return "".join(str(value or "").lower().split())
 
 
-def session_profile_from_form(form: Any, session_id: str, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+def session_profile_from_form(
+    form: Any,
+    session_id: str,
+    existing: dict[str, Any] | None = None,
+    assigned_model_key: str | None = None,
+    assigned_mode: str | None = None,
+) -> dict[str, Any]:
     existing = existing or {}
     contact = form.get("contact", "")
-    model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
+    if assigned_model_key is not None and assigned_mode is not None:
+        model_key, mode = dinomaly_model_key(assigned_model_key), assigned_mode
+    else:
+        model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     total_cases = len(test_names(model_key))
     start_index = existing.get("start_index")
     if start_index in {"", None}:
@@ -632,6 +641,18 @@ def contact_arm_progress(sessions: dict[str, dict[str, Any]], contact: str) -> l
             }
         )
     return cards
+
+
+def choose_start_arm(sessions: dict[str, dict[str, Any]], contact: str) -> dict[str, Any]:
+    cards = contact_arm_progress(sessions, contact)
+    partial = [card for card in cards if card["status"] == "partial"]
+    if partial:
+        partial.sort(key=lambda card: str(card.get("session_id", "")), reverse=True)
+        return partial[0]
+    not_started = [card for card in cards if card["status"] == "not-started"]
+    if not_started:
+        return random.choice(not_started)
+    return random.choice(cards or ARM_OPTIONS)
 
 
 def active_session_id() -> str:
@@ -1410,13 +1431,10 @@ PROFILE_BODY = """
         <input name="contact" type="email" required>
         <div class="help-text">(Use the same email to continue sessions.)</div>
       </div>
-      <div class="field"><label>Review arm</label>
-        <select name="review_arm">
-          {% for option in arm_options %}
-          <option value="{{ option.key }}">{{ option.label }}</option>
-          {% endfor %}
-        </select>
-        <div class="help-text">This arm is locked once the review starts.</div>
+      <div class="field">
+        <label>Review arm</label>
+        <input value="Assigned automatically on start" disabled>
+        <div class="help-text">The assigned arm is randomized for new reviews and locked after start.</div>
       </div>
       <div class="field span-2"><label>Session notes</label><textarea name="session_notes"></textarea></div>
     </div>
@@ -1451,7 +1469,7 @@ RESUME_BODY = """
       </div>
       {% endfor %}
     </div>
-    <div class="note">Selected arm: <strong>{{ selected_arm.label }}</strong>. This choice stays locked during the review.</div>
+    <div class="note">Assigned arm: <strong>{{ selected_arm.label }}</strong>. This arm stays locked during the review.</div>
 
     {% for key, value in submitted.items() %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
@@ -1724,9 +1742,14 @@ def profile() -> str:
 def start() -> str | Response:
     form = request.form
     sessions = load_sessions()
-    model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     action = form.get("session_action", "check")
     contact = form.get("contact", "")
+    submitted_arm = form.get("review_arm", "")
+    if submitted_arm:
+        model_key, mode = parse_arm_key(submitted_arm)
+    else:
+        assigned_arm = choose_start_arm(sessions, contact)
+        model_key, mode = assigned_arm["model_key"], assigned_arm["mode"]
     existing_contact_match = latest_matching_session(sessions, contact)
     selected_arm_match = latest_matching_arm_session(sessions, contact, model_key, mode)
 
@@ -1751,6 +1774,7 @@ def start() -> str | Response:
                 "session_notes",
             ]
         }
+        submitted["review_arm"] = arm_key(model_key, mode)
         selected_option = next(option for option in ARM_OPTIONS if option["key"] == arm_key(model_key, mode))
         arm_progress = contact_arm_progress(sessions, contact)
         log_event(
@@ -1769,7 +1793,7 @@ def start() -> str | Response:
             submitted=submitted,
             arm_progress=arm_progress,
             selected_arm=selected_option,
-            primary_action_label="Continue selected arm" if selected_arm_match else "Start selected arm",
+            primary_action_label="Continue assigned arm" if selected_arm_match else "Start assigned arm",
         )
 
     pending_resume_session_id = str(browser_session.get("pending_resume_session_id", ""))
@@ -1786,7 +1810,13 @@ def start() -> str | Response:
             session_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         event = "start_session"
 
-    sessions[session_id] = session_profile_from_form(form, session_id, sessions.get(session_id))
+    sessions[session_id] = session_profile_from_form(
+        form,
+        session_id,
+        sessions.get(session_id),
+        assigned_model_key=model_key,
+        assigned_mode=mode,
+    )
     save_sessions(sessions)
     browser_session["review_session_id"] = session_id
     browser_session.pop("pending_resume_session_id", None)
