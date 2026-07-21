@@ -9,6 +9,9 @@ env/
 .~lock.*
 .playwright-mcp/
 
+# Offline feature tensors are not needed by the deployed review UI.
+*.pt
+
 # Runtime review state. These are created by the app and should not be committed.
 doctor_review_responses.csv
 doctor_review_responses.jsonl
