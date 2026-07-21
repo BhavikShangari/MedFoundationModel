@@ -624,12 +624,15 @@ def contact_arm_progress(sessions: dict[str, dict[str, Any]], contact: str) -> l
         if answered >= total and total > 0:
             status = "completed"
             status_label = "Completed"
+            action_label = "Open completed arm"
         elif answered > 0:
             status = "partial"
             status_label = "Partial"
+            action_label = "Continue this arm"
         else:
             status = "not-started"
             status_label = "Not started"
+            action_label = "Start this arm"
         cards.append(
             {
                 **option,
@@ -638,6 +641,7 @@ def contact_arm_progress(sessions: dict[str, dict[str, Any]], contact: str) -> l
                 "total": total,
                 "status": status,
                 "status_label": status_label,
+                "action_label": action_label,
             }
         )
     return cards
@@ -1273,7 +1277,13 @@ textarea { min-height: 96px; resize: vertical; }
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
 }
+.arm-status-card:hover { box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.14); }
 .arm-status-card.completed { border-color: #22c55e; background: #f0fdf4; }
 .arm-status-card.partial { border-color: #f59e0b; background: #fffbeb; }
 .arm-status-card.not-started { border-color: #ef4444; background: #fef2f2; }
@@ -1431,58 +1441,52 @@ PROFILE_BODY = """
         <input name="contact" type="email" required>
         <div class="help-text">(Use the same email to continue sessions.)</div>
       </div>
-      <div class="field">
-        <label>Review arm</label>
-        <select name="review_arm">
-          {% for option in arm_options %}
-          <option value="{{ option.key }}" {% if option.key == default_arm_key %}selected{% endif %}>{{ option.label }}</option>
-          {% endfor %}
-        </select>
-        <div class="help-text">A random arm is preselected. Change it here only if a specific arm is required.</div>
-      </div>
       <div class="field span-2"><label>Session notes</label><textarea name="session_notes"></textarea></div>
     </div>
-    <button class="btn" type="submit">Start review</button>
+    <button class="btn" type="submit">Continue</button>
   </form>
 </div>
 """
 
 
-RESUME_BODY = """
+ARM_SELECTION_BODY = """
 <div class="profile-wrap">
   <div class="topbar">
     <div>
-      <h1 class="title">Continue Previous Review?</h1>
-      <div class="subtitle">A saved review profile matches this email.</div>
+      <h1 class="title">Select Review Arm</h1>
+      <div class="subtitle">Choose an arm after checking previous progress for this email.</div>
     </div>
   </div>
   <form class="profile-card" method="post" action="{{ url_for('start') }}">
-    <div class="panel-title">Matched reviewer</div>
+    <div class="panel-title">Reviewer</div>
     <div class="metrics" style="margin-bottom:16px;">
-      <div class="metric"><div class="metric-label">Doctor</div><div class="metric-value">{{ existing.doctor_name }}</div></div>
-      <div class="metric"><div class="metric-label">Hospital</div><div class="metric-value">{{ existing.hospital_name }}</div></div>
-      <div class="metric"><div class="metric-label">Last updated</div><div class="metric-value">{{ existing.updated_at }}</div></div>
+      <div class="metric"><div class="metric-label">Doctor</div><div class="metric-value">{{ submitted.doctor_name }}</div></div>
+      <div class="metric"><div class="metric-label">Hospital</div><div class="metric-value">{{ submitted.hospital_name }}</div></div>
+      <div class="metric"><div class="metric-label">Email</div><div class="metric-value">{{ submitted.contact }}</div></div>
     </div>
     <div class="panel-title">Review arm status for this email</div>
+    <div class="note">
+      Suggested arm: <strong>{{ suggested_arm.label }}</strong>.
+      <button class="btn secondary" style="margin-top:10px;" name="review_arm" value="{{ suggested_arm.key }}" type="submit">Use suggested arm</button>
+    </div>
     <div class="arm-status-grid">
       {% for arm in arm_progress %}
-      <div class="arm-status-card {{ arm.status }}">
+      <button class="arm-status-card {{ arm.status }}" name="review_arm" value="{{ arm.key }}" type="submit">
         <div class="arm-status-title">{{ arm.label }}</div>
         <div class="arm-status-meta">{{ arm.training }}</div>
         <div class="arm-status-value">{{ arm.status_label }} - {{ arm.answered }} / {{ arm.total }}</div>
-      </div>
+        <div class="help-text">{{ arm.action_label }}</div>
+      </button>
       {% endfor %}
     </div>
-    <div class="note">Assigned arm: <strong>{{ selected_arm.label }}</strong>. This arm stays locked during the review.</div>
+    <div class="note">The selected arm will be locked for this review session and logged with the saved responses.</div>
 
     {% for key, value in submitted.items() %}
+    {% if key != "review_arm" %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endif %}
     {% endfor %}
-
-    <div class="actions">
-      <button class="btn" name="session_action" value="resume" type="submit">{{ primary_action_label }}</button>
-      <button class="btn secondary" name="session_action" value="new" type="submit">Start new review</button>
-    </div>
+    <input type="hidden" name="session_action" value="select_arm">
   </form>
 </div>
 """
@@ -1736,11 +1740,8 @@ def case_cells_for(session_id: str, mode: str, current_index: int, model_key: st
 
 @app.get("/")
 def profile() -> str:
-    default_arm = random.choice(ARM_OPTIONS)
     return render_page(
         PROFILE_BODY,
-        arm_options=ARM_OPTIONS,
-        default_arm_key=default_arm["key"],
     )
 
 
@@ -1751,20 +1752,8 @@ def start() -> str | Response:
     action = form.get("session_action", "check")
     contact = form.get("contact", "")
     submitted_arm = form.get("review_arm", "")
-    if submitted_arm:
-        model_key, mode = parse_arm_key(submitted_arm)
-    else:
-        assigned_arm = choose_start_arm(sessions, contact)
-        model_key, mode = assigned_arm["model_key"], assigned_arm["mode"]
-    existing_contact_match = latest_matching_session(sessions, contact)
-    selected_arm_match = latest_matching_arm_session(sessions, contact, model_key, mode)
 
-    if action == "check" and existing_contact_match is not None:
-        existing_session_id, existing = selected_arm_match or existing_contact_match
-        if selected_arm_match:
-            browser_session["pending_resume_session_id"] = existing_session_id
-        else:
-            browser_session.pop("pending_resume_session_id", None)
+    if action == "check" or not submitted_arm:
         submitted = {
             key: form.get(key, "")
             for key in [
@@ -1780,37 +1769,30 @@ def start() -> str | Response:
                 "session_notes",
             ]
         }
-        submitted["review_arm"] = arm_key(model_key, mode)
-        selected_option = next(option for option in ARM_OPTIONS if option["key"] == arm_key(model_key, mode))
         arm_progress = contact_arm_progress(sessions, contact)
+        suggested_arm = choose_start_arm(sessions, contact)
         log_event(
-            "resume_prompt",
+            "arm_selection_prompt",
             {
-                **existing,
-                "mode": mode,
-                "dinomaly_model": model_key,
-                "answered_count": len(answered_ids(existing_session_id, mode, model_key)) if selected_arm_match else 0,
-                "total_cases": len(test_names(model_key)),
+                **submitted,
+                "answered_count": 0,
+                "total_cases": len(test_names()),
             },
         )
         return render_page(
-            RESUME_BODY,
-            existing=existing,
+            ARM_SELECTION_BODY,
             submitted=submitted,
             arm_progress=arm_progress,
-            selected_arm=selected_option,
-            primary_action_label="Continue assigned arm" if selected_arm_match else "Start assigned arm",
+            suggested_arm=suggested_arm,
         )
 
-    pending_resume_session_id = str(browser_session.get("pending_resume_session_id", ""))
-    if action == "resume" and pending_resume_session_id in sessions:
-        session_id = pending_resume_session_id
-        event = "resume_session"
-    elif action == "resume" and selected_arm_match is not None:
+    model_key, mode = parse_arm_key(submitted_arm)
+    selected_arm_match = latest_matching_arm_session(sessions, contact, model_key, mode)
+
+    if selected_arm_match is not None:
         session_id = selected_arm_match[0]
         event = "resume_session"
     else:
-        browser_session.pop("pending_resume_session_id", None)
         session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         while session_id in sessions:
             session_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -1825,7 +1807,6 @@ def start() -> str | Response:
     )
     save_sessions(sessions)
     browser_session["review_session_id"] = session_id
-    browser_session.pop("pending_resume_session_id", None)
     answered = answered_ids(session_id, mode, model_key)
     log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
     start_index = int(sessions[session_id].get("start_index", 0) or 0)
