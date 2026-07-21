@@ -46,6 +46,10 @@ def assessment_field_name(label: str) -> str:
     return label.lower().replace(" ", "_")
 
 
+def disease_display_label(label: str) -> str:
+    return "Other Disease" if label == "other" else label
+
+
 def parse_assessment_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item) for item in value]
@@ -1592,12 +1596,13 @@ REVIEW_BODY = """
           <input type="hidden" name="top_k" value="{{ top_k }}">
           <input type="hidden" name="min_votes" value="{{ min_votes }}">
           <label>Doctor diagnosis</label>
+          <div class="help-text">If there is more than one disease or diagnosis, select all that apply.</div>
           <div class="checkbox-grid">
             {% for disease in disease_columns %}
             <div class="checkbox-item">
               <label class="checkbox-main">
                 <input type="checkbox" name="diseases" value="{{ disease }}" {% if disease in previous_diseases %}checked{% endif %}>
-                <span>{{ disease }}</span>
+                <span>{{ disease_labels[disease] }}</span>
               </label>
               <div class="certainty-row">
                 <span>How sure?</span>
@@ -1614,7 +1619,11 @@ REVIEW_BODY = """
             {% endfor %}
           </div>
           <input name="review_time_seconds" type="hidden" value="0">
-          <div class="field"><label>Comments</label><textarea name="comments">{{ previous_comments }}</textarea></div>
+          <div class="field">
+            <label>Session notes</label>
+            <div class="help-text">If selecting Other Disease, enter the disease details here.</div>
+            <textarea name="comments">{{ previous_comments }}</textarea>
+          </div>
           <div class="actions">
             <button class="btn" name="action" value="save_next" type="submit">Save and next</button>
             <button class="btn secondary" name="action" value="save_recheck_next" type="submit">Save for recheck</button>
@@ -1678,7 +1687,7 @@ def pill_html(values: list[str], strong: bool = False, empty: str = "None") -> s
     if not values:
         return f"<span class='pill'>{empty}</span>"
     class_name = "pill strong" if strong else "pill"
-    return "".join(f"<span class='{class_name}'>{value}</span>" for value in values)
+    return "".join(f"<span class='{class_name}'>{disease_display_label(value)}</span>" for value in values)
 
 
 def retrieval_cards_html(retrieved: list[dict[str, Any]], show_labels: bool, model_key: str = DEFAULT_DINOMALY_MODEL) -> str:
@@ -1706,7 +1715,7 @@ def evidence_html(evidence: list[dict[str, Any]]) -> str:
     rows = ["<div class='note'>"]
     for item in evidence:
         rows.append(
-            f"<div><strong>{item['disease']}</strong>: {item['count']} / {DINOMALY_RETRIEVAL_COUNT} retrieved scans, "
+            f"<div><strong>{disease_display_label(item['disease'])}</strong>: {item['count']} / {DINOMALY_RETRIEVAL_COUNT} retrieved scans, "
             f"mean similarity {item['mean_similarity']:.4f}</div>"
         )
     rows.append("</div>")
@@ -1886,6 +1895,7 @@ def review() -> str | Response:
         prediction_pills=pill_html(prediction["predicted"], strong=True, empty="No prediction"),
         evidence_html=evidence_html(prediction["evidence"]),
         disease_columns=ASSESSMENT_OPTIONS,
+        disease_labels={disease: disease_display_label(disease) for disease in ASSESSMENT_OPTIONS},
         disease_field_names={disease: assessment_field_name(disease) for disease in ASSESSMENT_OPTIONS},
         previous_diseases=previous_diseases,
         certainty_levels=CERTAINTY_LEVELS,
