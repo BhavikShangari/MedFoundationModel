@@ -36,7 +36,7 @@ DISEASE_COLUMNS = [
 NO_DISEASE_OPTION = "No Disease"
 ASSESSMENT_OPTIONS = [NO_DISEASE_OPTION, *DISEASE_COLUMNS]
 METHOD_MODES = {"combined"}
-MODEL_SCOPED_MODES = {"human", "combined"}
+MODEL_SCOPED_MODES = {"combined"}
 DINOMALY_RETRIEVAL_COUNT = 5
 DINOMALY_PREDICTION_MIN_VOTES = 3
 CERTAINTY_LEVELS = ("low", "medium", "high")
@@ -132,11 +132,12 @@ MODE_LABELS = {
 }
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DINOMALY_MODEL = "dinomaly_h"
+HUMAN_MODEL_KEY = "none"
 DINOMALY_MODELS = {
     "dinomaly_h": {
         "label": "Dinomaly-H",
         "training": "Healthy-only pretraining",
-        "description": "Dinomaly trained using healthy images only.",
+        "description": "Dinomaly trained using healthy images only. The doctor sees the test scan, anomaly map, and retrieved cases selected by this model.",
         "folder": ROOT / "brset_ai_human/dinomaly_h",
         "test_names": "brset_normal_test_name.pkl",
         "train_names": "brset_normal_train_name.pkl",
@@ -144,7 +145,7 @@ DINOMALY_MODELS = {
     "dinomaly_hd": {
         "label": "Dinomaly-HD",
         "training": "Healthy + diseased pretraining",
-        "description": "Dinomaly pretrained using healthy and diseased images.",
+        "description": "Dinomaly pretrained using healthy and diseased images. The doctor sees the test scan, anomaly map, and retrieved cases selected by this model.",
         "folder": ROOT / "brset_ai_human/dinomaly_hd",
         "test_names": "brset_normal_disease_test_name.pkl",
         "train_names": "brset_normal_disease_train_name.pkl",
@@ -153,16 +154,27 @@ DINOMALY_MODELS = {
 
 ARM_OPTIONS = [
     {
-        "key": f"{model_key}:{mode}",
+        "key": "human",
+        "model_key": HUMAN_MODEL_KEY,
+        "mode": "human",
+        "label": MODE_LABELS["human"],
+        "model_label": MODE_LABELS["human"],
+        "mode_label": "Clinical baseline",
+        "training": "Unaided scan review",
+        "description": "Doctor sees only the test scan and decides which disease or diagnosis is present.",
+    }
+] + [
+    {
+        "key": f"{model_key}:combined",
         "model_key": model_key,
-        "mode": mode,
-        "label": f"{config['label']} / {MODE_LABELS[mode]}",
+        "mode": "combined",
+        "label": f"{MODE_LABELS['combined']} - {config['label']}",
         "model_label": config["label"],
-        "mode_label": MODE_LABELS[mode],
+        "mode_label": MODE_LABELS["combined"],
         "training": config["training"],
+        "description": config["description"],
     }
     for model_key, config in DINOMALY_MODELS.items()
-    for mode in MODE_LABELS
 ]
 
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
@@ -236,26 +248,42 @@ def arm_key(model_key: Any, mode: Any) -> str:
     mode_key = str(mode or "human")
     if mode_key not in MODE_LABELS:
         mode_key = "human"
+    if mode_key == "human":
+        return "human"
     return f"{dinomaly_model_key(model_key)}:{mode_key}"
 
 
 def parse_arm_key(value: Any) -> tuple[str, str]:
     text = str(value or "")
+    if text in {"", "human", HUMAN_MODEL_KEY}:
+        return HUMAN_MODEL_KEY, "human"
     if ":" in text:
         model_part, mode_part = text.split(":", 1)
     else:
         model_part, mode_part = DEFAULT_DINOMALY_MODEL, text
-    model_key = dinomaly_model_key(model_part)
     mode = mode_part if mode_part in MODE_LABELS else "human"
+    if mode == "human":
+        return HUMAN_MODEL_KEY, "human"
+    model_key = dinomaly_model_key(model_part)
     return model_key, mode
 
 
 def arm_label(model_key: Any, mode: Any) -> str:
-    model_key = dinomaly_model_key(model_key)
     mode = str(mode or "human")
     if mode not in MODE_LABELS:
         mode = "human"
+    if mode == "human":
+        return MODE_LABELS["human"]
+    model_key = dinomaly_model_key(model_key)
     return f"{DINOMALY_MODELS[model_key]['label']} / {MODE_LABELS[mode]}"
+
+
+def arm_option_for(model_key: Any, mode: Any) -> dict[str, Any]:
+    key = arm_key(model_key, mode)
+    for option in ARM_OPTIONS:
+        if option["key"] == key:
+            return option
+    return ARM_OPTIONS[0]
 
 
 def model_config(model_key: Any = None) -> dict[str, Any]:
@@ -529,7 +557,8 @@ def session_profile_from_form(
     existing = existing or {}
     contact = form.get("contact", "")
     if assigned_model_key is not None and assigned_mode is not None:
-        model_key, mode = dinomaly_model_key(assigned_model_key), assigned_mode
+        mode = assigned_mode if assigned_mode in MODE_LABELS else "human"
+        model_key = HUMAN_MODEL_KEY if mode == "human" else dinomaly_model_key(assigned_model_key)
     else:
         model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     total_cases = len(test_names(model_key))
@@ -553,7 +582,7 @@ def session_profile_from_form(
         "contact_key": normalize_contact(contact),
         "session_id": session_id,
         "mode": mode,
-        "dinomaly_model": model_key,
+        "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "",
         "review_arm": arm_key(model_key, mode),
         "review_arm_label": arm_label(model_key, mode),
         "start_index": start_index,
@@ -1488,6 +1517,7 @@ ARM_SELECTION_BODY = """
       <button class="arm-status-card {{ arm.status }}" name="review_arm" value="{{ arm.key }}" type="submit">
         <div class="arm-status-title">{{ arm.label }}</div>
         <div class="arm-status-meta">{{ arm.training }}</div>
+        <div class="help-text">{{ arm.description }}</div>
         <div class="arm-status-value">{{ arm.status_label }} - {{ arm.answered }} / {{ arm.total }}</div>
         <div class="help-text">{{ arm.action_label }}</div>
       </button>
@@ -1847,6 +1877,7 @@ def review() -> str | Response:
     session_model_key, session_mode = session_arm(session_profile)
     model_key = session_model_key
     mode = session_mode
+    selected_arm = arm_option_for(model_key, mode)
     status_mode = scoped_mode(mode, model_key)
     names = test_names(model_key)
     total_cases = len(names)
@@ -1886,10 +1917,10 @@ def review() -> str | Response:
         doctor=sessions[session_id],
         mode=mode,
         model_key=model_key,
-        model_label=model_config(model_key)["label"],
-        model_training=model_config(model_key)["training"],
-        model_description=model_config(model_key)["description"],
-        mode_label=MODE_LABELS[mode],
+        model_label=selected_arm["model_label"],
+        model_training=selected_arm["training"],
+        model_description=selected_arm["description"],
+        mode_label=selected_arm["mode_label"],
         mode_short=mode_short,
         patient_demo=patient_demographics(row),
         index=index,
