@@ -1381,6 +1381,53 @@ textarea { min-height: 96px; resize: vertical; }
   object-fit: contain;
   border-radius: 8px;
 }
+.logs-wrap { max-width: 1500px; margin: 28px auto; padding: 0 20px 34px; }
+.logs-table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: auto;
+  max-height: 72vh;
+}
+.logs-table {
+  width: 100%;
+  min-width: 1400px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.logs-table th,
+.logs-table td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 8px 9px;
+  vertical-align: top;
+  text-align: left;
+}
+.logs-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.logs-table td:last-child,
+.logs-table th:last-child { border-right: 0; }
+.log-cell-text {
+  max-width: 260px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  font: inherit;
+}
+.empty-state {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--muted);
+  background: #ffffff;
+}
 @media (max-width: 1380px) {
   .workspace { grid-template-columns: 1fr; }
 }
@@ -1719,6 +1766,67 @@ COMPARE_ZOOM_BODY = """
 """
 
 
+LOGS_BODY = """
+<div class="logs-wrap">
+  <div class="topbar">
+    <div>
+      <h1 class="title">Doctor Response Logs</h1>
+      <div class="subtitle">Saved review responses. This page is only available by opening the /logs URL directly.</div>
+    </div>
+  </div>
+
+  <div class="profile-card" style="margin-bottom:16px;">
+    <div class="panel-title">Summary</div>
+    <div class="metrics">
+      <div class="metric"><div class="metric-label">Responses</div><div class="metric-value">{{ response_count }}</div></div>
+      <div class="metric"><div class="metric-label">Reviewer sessions</div><div class="metric-value">{{ session_count }}</div></div>
+      <div class="metric"><div class="metric-label">Session log rows</div><div class="metric-value">{{ session_log_count }}</div></div>
+      <div class="metric"><div class="metric-label">Case status entries</div><div class="metric-value">{{ case_status_count }}</div></div>
+    </div>
+  </div>
+
+  {% if arm_counts %}
+  <div class="profile-card" style="margin-bottom:16px;">
+    <div class="panel-title">Responses by arm</div>
+    <div class="metrics">
+      {% for item in arm_counts %}
+      <div class="metric">
+        <div class="metric-label">{{ item.label }}</div>
+        <div class="metric-value">{{ item.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <div class="logs-table-wrap">
+    <table class="logs-table">
+      <thead>
+        <tr>
+          {% for column in columns %}
+          <th>{{ column }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for column in columns %}
+          <td><pre class="log-cell-text">{{ row[column] }}</pre></td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No doctor responses have been saved yet.</div>
+  {% endif %}
+</div>
+"""
+
+
 def render_page(body: str, **context: Any) -> str:
     return render_template_string(BASE_HTML, css=CSS, body=render_template_string(body, **context))
 
@@ -1762,6 +1870,51 @@ def evidence_html(evidence: list[dict[str, Any]]) -> str:
     return "".join(rows)
 
 
+def display_log_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def response_log_rows() -> tuple[list[str], list[dict[str, str]]]:
+    raw_rows = read_response_rows()
+    columns = list(RESPONSE_FIELDS)
+    for row in raw_rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+    rows = [
+        {column: display_log_value(row.get(column, "")) for column in columns}
+        for row in raw_rows
+    ]
+    rows.sort(key=lambda row: row.get("timestamp", ""), reverse=True)
+    return columns, rows
+
+
+def case_status_entry_count() -> int:
+    statuses = load_case_statuses()
+    total = 0
+    for session_data in statuses.values():
+        if isinstance(session_data, dict):
+            for mode_data in session_data.values():
+                if isinstance(mode_data, dict):
+                    total += len(mode_data)
+    return total
+
+
+def response_arm_counts(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    counts = {option["key"]: 0 for option in ARM_OPTIONS}
+    for row in rows:
+        key = arm_key(row.get("dinomaly_model"), row.get("mode"))
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"label": option["label"], "count": counts.get(option["key"], 0)}
+        for option in ARM_OPTIONS
+    ]
+
+
 def case_cells_for(session_id: str, mode: str, current_index: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
     statuses = load_case_statuses()
     status_mode = scoped_mode(mode, model_key)
@@ -1791,6 +1944,21 @@ def case_cells_for(session_id: str, mode: str, current_index: int, model_key: st
 def profile() -> str:
     return render_page(
         PROFILE_BODY,
+    )
+
+
+@app.get("/logs")
+def logs() -> str:
+    columns, rows = response_log_rows()
+    return render_page(
+        LOGS_BODY,
+        columns=columns,
+        rows=rows,
+        response_count=len(rows),
+        session_count=len(load_sessions()),
+        session_log_count=len(read_csv_rows(SESSION_LOG_CSV)),
+        case_status_count=case_status_entry_count(),
+        arm_counts=response_arm_counts(rows),
     )
 
 
