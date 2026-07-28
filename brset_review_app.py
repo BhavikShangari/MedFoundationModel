@@ -1428,6 +1428,14 @@ textarea { min-height: 96px; resize: vertical; }
   color: var(--muted);
   background: #ffffff;
 }
+.logs-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto auto;
+  gap: 12px;
+  align-items: end;
+}
+.logs-filter-grid .field { margin-bottom: 0; }
+.logs-filter-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 1380px) {
   .workspace { grid-template-columns: 1fr; }
 }
@@ -1443,7 +1451,7 @@ textarea { min-height: 96px; resize: vertical; }
   }
   .case-header { align-items: flex-start; flex-wrap: wrap; }
   .timer-box { text-align: left; }
-  .workspace, .evidence-grid, .profile-grid, .arm-status-grid, .zoom-compare { grid-template-columns: 1fr; }
+  .workspace, .evidence-grid, .profile-grid, .arm-status-grid, .zoom-compare, .logs-filter-grid { grid-template-columns: 1fr; }
   .span-2 { grid-column: span 1; }
 }
 """
@@ -1775,10 +1783,42 @@ LOGS_BODY = """
     </div>
   </div>
 
+  <form class="profile-card" style="margin-bottom:16px;" method="get" action="{{ url_for('logs') }}">
+    <div class="panel-title">Filters</div>
+    <div class="logs-filter-grid">
+      <div class="field">
+        <label>Doctor</label>
+        <select name="doctor">
+          <option value="all" {% if selected_doctor == "all" %}selected{% endif %}>All doctors</option>
+          {% for doctor in doctor_options %}
+          <option value="{{ doctor.key }}" {% if selected_doctor == doctor.key %}selected{% endif %}>{{ doctor.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Component</label>
+        <select name="arm">
+          <option value="all" {% if selected_arm == "all" %}selected{% endif %}>All components</option>
+          {% for arm in arm_options %}
+          <option value="{{ arm.key }}" {% if selected_arm == arm.key %}selected{% endif %}>{{ arm.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="logs-filter-actions">
+        <button class="btn" type="submit">Apply</button>
+        <a class="btn secondary" href="{{ url_for('logs') }}">Clear</a>
+      </div>
+      <div class="logs-filter-actions">
+        <a class="btn secondary" href="{{ download_url }}">Download CSV</a>
+      </div>
+    </div>
+  </form>
+
   <div class="profile-card" style="margin-bottom:16px;">
     <div class="panel-title">Summary</div>
     <div class="metrics">
-      <div class="metric"><div class="metric-label">Responses</div><div class="metric-value">{{ response_count }}</div></div>
+      <div class="metric"><div class="metric-label">Filtered responses</div><div class="metric-value">{{ response_count }}</div></div>
+      <div class="metric"><div class="metric-label">Total responses</div><div class="metric-value">{{ total_response_count }}</div></div>
       <div class="metric"><div class="metric-label">Reviewer sessions</div><div class="metric-value">{{ session_count }}</div></div>
       <div class="metric"><div class="metric-label">Session log rows</div><div class="metric-value">{{ session_log_count }}</div></div>
       <div class="metric"><div class="metric-label">Case status entries</div><div class="metric-value">{{ case_status_count }}</div></div>
@@ -1878,8 +1918,61 @@ def display_log_value(value: Any) -> str:
     return str(value)
 
 
-def response_log_rows() -> tuple[list[str], list[dict[str, str]]]:
-    raw_rows = read_response_rows()
+def response_row_arm_key(row: dict[str, Any]) -> str:
+    return arm_key(row.get("dinomaly_model"), row.get("mode"))
+
+
+def response_row_doctor_key(row: dict[str, Any]) -> str:
+    contact_key = normalize_contact(row.get("contact_key") or row.get("contact"))
+    if contact_key:
+        return contact_key
+    return normalize_contact(row.get("doctor_name"))
+
+
+def response_row_doctor_label(row: dict[str, Any]) -> str:
+    name = str(row.get("doctor_name") or "Unknown doctor").strip() or "Unknown doctor"
+    contact = str(row.get("contact") or row.get("contact_key") or "").strip()
+    hospital = str(row.get("hospital_name") or "").strip()
+    details = [value for value in [contact, hospital] if value]
+    return f"{name} ({', '.join(details)})" if details else name
+
+
+def doctor_log_options(raw_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    options: dict[str, str] = {}
+    for row in raw_rows:
+        key = response_row_doctor_key(row)
+        if key and key not in options:
+            options[key] = response_row_doctor_label(row)
+    return [
+        {"key": key, "label": label}
+        for key, label in sorted(options.items(), key=lambda item: item[1].lower())
+    ]
+
+
+def arm_log_options(raw_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    present = {response_row_arm_key(row) for row in raw_rows}
+    return [
+        {"key": option["key"], "label": option["label"]}
+        for option in ARM_OPTIONS
+        if not present or option["key"] in present
+    ]
+
+
+def filter_response_rows(
+    raw_rows: list[dict[str, Any]],
+    doctor_key: str = "all",
+    arm_filter: str = "all",
+) -> list[dict[str, Any]]:
+    filtered = raw_rows
+    if doctor_key != "all":
+        filtered = [row for row in filtered if response_row_doctor_key(row) == doctor_key]
+    if arm_filter != "all":
+        filtered = [row for row in filtered if response_row_arm_key(row) == arm_filter]
+    return filtered
+
+
+def response_log_rows(raw_rows: list[dict[str, Any]] | None = None) -> tuple[list[str], list[dict[str, str]]]:
+    raw_rows = read_response_rows() if raw_rows is None else raw_rows
     columns = list(RESPONSE_FIELDS)
     for row in raw_rows:
         for key in row:
@@ -1904,15 +1997,27 @@ def case_status_entry_count() -> int:
     return total
 
 
-def response_arm_counts(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+def response_arm_counts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts = {option["key"]: 0 for option in ARM_OPTIONS}
     for row in rows:
-        key = arm_key(row.get("dinomaly_model"), row.get("mode"))
+        key = response_row_arm_key(row)
         counts[key] = counts.get(key, 0) + 1
     return [
         {"label": option["label"], "count": counts.get(option["key"], 0)}
         for option in ARM_OPTIONS
     ]
+
+
+def csv_response(rows: list[dict[str, str]], columns: list[str], filename: str) -> Response:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, quoting=csv.QUOTE_ALL)
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 def case_cells_for(session_id: str, mode: str, current_index: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
@@ -1949,17 +2054,48 @@ def profile() -> str:
 
 @app.get("/logs")
 def logs() -> str:
-    columns, rows = response_log_rows()
+    raw_rows = read_response_rows()
+    selected_doctor = request.args.get("doctor", "all")
+    selected_arm = request.args.get("arm", "all")
+    if selected_doctor not in {"all", *{option["key"] for option in doctor_log_options(raw_rows)}}:
+        selected_doctor = "all"
+    if selected_arm not in {"all", *{option["key"] for option in ARM_OPTIONS}}:
+        selected_arm = "all"
+    doctor_filtered_rows = filter_response_rows(raw_rows, selected_doctor, "all")
+    filtered_raw_rows = filter_response_rows(raw_rows, selected_doctor, selected_arm)
+    columns, rows = response_log_rows(filtered_raw_rows)
     return render_page(
         LOGS_BODY,
         columns=columns,
         rows=rows,
         response_count=len(rows),
+        total_response_count=len(raw_rows),
         session_count=len(load_sessions()),
         session_log_count=len(read_csv_rows(SESSION_LOG_CSV)),
         case_status_count=case_status_entry_count(),
-        arm_counts=response_arm_counts(rows),
+        arm_counts=response_arm_counts(doctor_filtered_rows),
+        doctor_options=doctor_log_options(raw_rows),
+        arm_options=arm_log_options(doctor_filtered_rows),
+        selected_doctor=selected_doctor,
+        selected_arm=selected_arm,
+        download_url=url_for("download_logs", doctor=selected_doctor, arm=selected_arm),
     )
+
+
+@app.get("/logs/download.csv")
+def download_logs() -> Response:
+    raw_rows = read_response_rows()
+    selected_doctor = request.args.get("doctor", "all")
+    selected_arm = request.args.get("arm", "all")
+    filtered_raw_rows = filter_response_rows(raw_rows, selected_doctor, selected_arm)
+    columns, rows = response_log_rows(filtered_raw_rows)
+    filename_parts = ["doctor_responses"]
+    if selected_doctor != "all":
+        filename_parts.append(selected_doctor.replace("@", "_at_").replace(".", "_"))
+    if selected_arm != "all":
+        filename_parts.append(selected_arm.replace(":", "_"))
+    filename = "_".join(filename_parts) + ".csv"
+    return csv_response(rows, columns, filename)
 
 
 @app.post("/start")
