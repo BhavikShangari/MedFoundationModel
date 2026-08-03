@@ -53,14 +53,9 @@ SIGN_FINDING_OPTIONS = [
 ]
 ASSESSMENT_GROUPS = [
     {
-        "title": "No disease",
-        "description": "Use this only when the scan does not show disease or clinically relevant findings.",
-        "options": [NO_DISEASE_OPTION],
-    },
-    {
         "title": "Diseases / diagnoses",
-        "description": "Select all diagnoses that apply.",
-        "options": DISEASE_DIAGNOSIS_OPTIONS,
+        "description": "Select No Disease or all diagnoses that apply.",
+        "options": [NO_DISEASE_OPTION, *DISEASE_DIAGNOSIS_OPTIONS],
     },
     {
         "title": "Signs / findings",
