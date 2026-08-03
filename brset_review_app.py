@@ -1716,12 +1716,12 @@ REVIEW_BODY = """
             <div class="panel-description">The AI model highlights regions it thinks are anomalous. {{ model_description }}</div>
             <img class="scan-img" src="{{ url_for('anomaly_image', image_id=image_id, model=model_key) }}" alt="Anomaly map">
             <div class="panel-title" style="margin-top:14px;">Dinomaly prediction</div>
-            <div class="case-meta" style="margin-bottom:8px;">Showing labels present in at least 3 of the 5 retrieved scans.</div>
+            <div class="case-meta" style="margin-bottom:8px;">Showing labels present in at least 3 of the 5 retrieved similar images.</div>
             {{ prediction_pills|safe }}
             {{ evidence_html|safe }}
           </div>
           <div class="panel">
-            <div class="panel-title">Retrieved scans with labels</div>
+            <div class="panel-title">Retrieved similar images with labels</div>
             <div class="panel-description">Similar retrieved cases which Dinomaly thinks are similar to the current test case, with the diseases present in those retrieved cases.</div>
             {{ retrieval_cards|safe }}
           </div>
@@ -1938,9 +1938,9 @@ def retrieval_cards_html(retrieved: list[dict[str, Any]], show_labels: bool, mod
     for item in retrieved:
         cards.append(
             "<div class='retrieval-card'>"
-            f"<div class='retrieval-head'><span>Retrieved scan {item['rank']}</span>"
+            f"<div class='retrieval-head'><span>Retrieved similar image {item['rank']}</span>"
             f"<span>Similarity {item['similarity']:.3f}</span></div>"
-            f"<img class='retrieval-img' src='{url_for('retrieval_image', image_id=item['image_id'], model=model_key)}' alt='Retrieved scan'>"
+            f"<img class='retrieval-img' src='{url_for('retrieval_image', image_id=item['image_id'], model=model_key)}' alt='Retrieved similar image'>"
             f"<div style='margin-top:8px;'><a class='zoom-link' target='_blank' "
             f"href='{url_for('zoom_image', kind='retrieval', image_id=item['image_id'], model=model_key)}'>Zoom</a></div>"
         )
@@ -1957,7 +1957,7 @@ def evidence_html(evidence: list[dict[str, Any]]) -> str:
     rows = ["<div class='note'>"]
     for item in evidence:
         rows.append(
-            f"<div><strong>{disease_display_label(item['disease'])}</strong>: {item['count']} / {DINOMALY_RETRIEVAL_COUNT} retrieved scans, "
+            f"<div><strong>{disease_display_label(item['disease'])}</strong>: {item['count']} / {DINOMALY_RETRIEVAL_COUNT} retrieved similar images, "
             f"mean similarity {item['mean_similarity']:.4f}</div>"
         )
     rows.append("</div>")
@@ -2470,7 +2470,7 @@ def zoom_image(kind: str, image_id: str) -> str | Response:
         title = "Anomaly map zoom"
         image_url = url_for("anomaly_image", image_id=image_id, model=model_key)
     elif kind == "retrieval":
-        title = "Retrieved scan zoom"
+        title = "Retrieved similar image zoom"
         image_url = url_for("retrieval_image", image_id=image_id, model=model_key)
     else:
         return Response("Unknown image type", status=404)
