@@ -608,7 +608,7 @@ def session_profile_from_form(
     total_cases = len(test_names(model_key))
     start_index = existing.get("start_index")
     if start_index in {"", None}:
-        start_index = random.randrange(total_cases) if total_cases else 0
+        start_index = 0
     else:
         try:
             start_index = int(start_index)
@@ -818,11 +818,10 @@ def saved_response(session_id: str, mode: str, image_id: str, model_key: str = D
 
 def next_unanswered(answered: set[str], start_index: int = 0, model_key: str = DEFAULT_DINOMALY_MODEL) -> int:
     names = test_names(model_key)
-    for offset in range(len(names)):
-        index = (start_index + offset) % len(names)
-        if names[index] not in answered:
+    for index, image_id in enumerate(names):
+        if image_id not in answered:
             return index
-    return min(start_index, len(names) - 1)
+    return min(max(start_index, 0), len(names) - 1) if names else 0
 
 
 def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
