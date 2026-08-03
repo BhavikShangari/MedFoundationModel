@@ -209,11 +209,24 @@ ARM_OPTIONS = [
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
-RESPONSES_CSV = ROOT / "doctor_review_responses.csv"
-RESPONSES_JSONL = ROOT / "doctor_review_responses.jsonl"
-SESSION_LOG_CSV = ROOT / "doctor_review_session_log.csv"
-SESSIONS_JSON = ROOT / "doctor_review_sessions.json"
-CASE_STATUS_JSON = ROOT / "doctor_review_case_status.json"
+
+
+def runtime_data_dir() -> Path:
+    configured = os.environ.get("BRSET_REVIEW_DATA_DIR")
+    if configured:
+        return Path(configured)
+    render_disk = Path("/var/data")
+    if render_disk.exists():
+        return render_disk
+    return ROOT
+
+
+RUNTIME_DATA_DIR = runtime_data_dir()
+RESPONSES_CSV = RUNTIME_DATA_DIR / "doctor_review_responses.csv"
+RESPONSES_JSONL = RUNTIME_DATA_DIR / "doctor_review_responses.jsonl"
+SESSION_LOG_CSV = RUNTIME_DATA_DIR / "doctor_review_session_log.csv"
+SESSIONS_JSON = RUNTIME_DATA_DIR / "doctor_review_sessions.json"
+CASE_STATUS_JSON = RUNTIME_DATA_DIR / "doctor_review_case_status.json"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("BRSET_REVIEW_SECRET_KEY", "brset-review-local-secret")
@@ -513,6 +526,7 @@ def load_sessions() -> dict[str, dict[str, Any]]:
 
 
 def save_sessions(sessions: dict[str, dict[str, Any]]) -> None:
+    SESSIONS_JSON.parent.mkdir(parents=True, exist_ok=True)
     SESSIONS_JSON.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
 
 
@@ -523,6 +537,7 @@ def load_case_statuses() -> dict[str, Any]:
 
 
 def save_case_statuses(statuses: dict[str, Any]) -> None:
+    CASE_STATUS_JSON.parent.mkdir(parents=True, exist_ok=True)
     CASE_STATUS_JSON.write_text(json.dumps(statuses, indent=2), encoding="utf-8")
 
 
@@ -1876,6 +1891,7 @@ LOGS_BODY = """
       <div class="metric"><div class="metric-label">Reviewer sessions</div><div class="metric-value">{{ session_count }}</div></div>
       <div class="metric"><div class="metric-label">Session log rows</div><div class="metric-value">{{ session_log_count }}</div></div>
       <div class="metric"><div class="metric-label">Case status entries</div><div class="metric-value">{{ case_status_count }}</div></div>
+      <div class="metric"><div class="metric-label">Storage</div><div class="metric-value" style="font-size:13px;">{{ runtime_data_dir }}</div></div>
     </div>
   </div>
 
@@ -2127,6 +2143,7 @@ def logs() -> str:
         session_count=len(load_sessions()),
         session_log_count=len(read_csv_rows(SESSION_LOG_CSV)),
         case_status_count=case_status_entry_count(),
+        runtime_data_dir=str(RUNTIME_DATA_DIR),
         arm_counts=response_arm_counts(doctor_filtered_rows),
         doctor_options=doctor_log_options(raw_rows),
         arm_options=arm_log_options(doctor_filtered_rows),
