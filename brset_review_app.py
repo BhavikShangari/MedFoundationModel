@@ -34,7 +34,41 @@ DISEASE_COLUMNS = [
 ]
 
 NO_DISEASE_OPTION = "No Disease"
-ASSESSMENT_OPTIONS = [NO_DISEASE_OPTION, *DISEASE_COLUMNS]
+DISEASE_DIAGNOSIS_OPTIONS = [
+    "diabetic_retinopathy",
+    "macular_edema",
+    "nevus",
+    "amd",
+    "vascular_occlusion",
+    "hypertensive_retinopathy",
+    "retinal_detachment",
+    "myopic_fundus",
+    "other",
+]
+SIGN_FINDING_OPTIONS = [
+    "scar",
+    "drusens",
+    "hemorrhage",
+    "increased_cup_disc",
+]
+ASSESSMENT_GROUPS = [
+    {
+        "title": "No disease",
+        "description": "Use this only when the scan does not show disease or clinically relevant findings.",
+        "options": [NO_DISEASE_OPTION],
+    },
+    {
+        "title": "Diseases / diagnoses",
+        "description": "Select all diagnoses that apply.",
+        "options": DISEASE_DIAGNOSIS_OPTIONS,
+    },
+    {
+        "title": "Signs / findings",
+        "description": "Select all observed clinical signs or retinal findings that apply.",
+        "options": SIGN_FINDING_OPTIONS,
+    },
+]
+ASSESSMENT_OPTIONS = [NO_DISEASE_OPTION, *DISEASE_DIAGNOSIS_OPTIONS, *SIGN_FINDING_OPTIONS]
 METHOD_MODES = {"combined"}
 MODEL_SCOPED_MODES = {"combined"}
 DINOMALY_RETRIEVAL_COUNT = 5
@@ -1247,6 +1281,25 @@ textarea { min-height: 96px; resize: vertical; }
   gap: 7px;
   margin-top: 6px;
 }
+.assessment-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 10px;
+  margin-top: 10px;
+}
+.assessment-section-title {
+  font-size: 12px;
+  font-weight: 820;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.assessment-section-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 3px 0 8px;
+}
 .checkbox-item {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1691,28 +1744,34 @@ REVIEW_BODY = """
           <input type="hidden" name="top_k" value="{{ top_k }}">
           <input type="hidden" name="min_votes" value="{{ min_votes }}">
           <label>Doctor diagnosis</label>
-          <div class="help-text">If there is more than one disease or diagnosis, select all that apply.</div>
-          <div class="checkbox-grid">
-            {% for disease in disease_columns %}
-            <div class="checkbox-item">
-              <label class="checkbox-main">
-                <input type="checkbox" name="diseases" value="{{ disease }}" {% if disease in previous_diseases %}checked{% endif %}>
-                <span>{{ disease_labels[disease] }}</span>
-              </label>
-              <div class="certainty-row">
-                <span>How sure?</span>
-                <span class="certainty-options">
-                  {% for certainty in certainty_levels %}
-                  <label class="certainty-option">
-                    <input type="radio" name="certainty_{{ disease_field_names[disease] }}" value="{{ certainty }}" {% if disease_certainties[disease] == certainty %}checked{% endif %}>
-                    <span>{{ certainty|capitalize }}</span>
-                  </label>
-                  {% endfor %}
-                </span>
+          <div class="help-text">If there is more than one disease, diagnosis, sign, or finding, select all that apply.</div>
+          {% for group in assessment_groups %}
+          <div class="assessment-section">
+            <div class="assessment-section-title">{{ group.title }}</div>
+            <div class="assessment-section-note">{{ group.description }}</div>
+            <div class="checkbox-grid">
+              {% for disease in group.options %}
+              <div class="checkbox-item">
+                <label class="checkbox-main">
+                  <input type="checkbox" name="diseases" value="{{ disease }}" {% if disease in previous_diseases %}checked{% endif %}>
+                  <span>{{ disease_labels[disease] }}</span>
+                </label>
+                <div class="certainty-row">
+                  <span>How sure?</span>
+                  <span class="certainty-options">
+                    {% for certainty in certainty_levels %}
+                    <label class="certainty-option">
+                      <input type="radio" name="certainty_{{ disease_field_names[disease] }}" value="{{ certainty }}" {% if disease_certainties[disease] == certainty %}checked{% endif %}>
+                      <span>{{ certainty|capitalize }}</span>
+                    </label>
+                    {% endfor %}
+                  </span>
+                </div>
               </div>
+              {% endfor %}
             </div>
-            {% endfor %}
           </div>
+          {% endfor %}
           <input name="review_time_seconds" type="hidden" value="0">
           <div class="field">
             <label>Session notes</label>
@@ -2240,6 +2299,7 @@ def review() -> str | Response:
         prediction_pills=pill_html(prediction["predicted"], strong=True, empty="No prediction"),
         evidence_html=evidence_html(prediction["evidence"]),
         disease_columns=ASSESSMENT_OPTIONS,
+        assessment_groups=ASSESSMENT_GROUPS,
         disease_labels={disease: disease_display_label(disease) for disease in ASSESSMENT_OPTIONS},
         disease_field_names={disease: assessment_field_name(disease) for disease in ASSESSMENT_OPTIONS},
         previous_diseases=previous_diseases,
