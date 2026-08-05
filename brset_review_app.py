@@ -2598,7 +2598,7 @@ def save() -> Response:
 def scan_image(image_id: str) -> Response:
     sample = rare_lhon_sample(image_id)
     if sample is not None:
-        return send_resolved_image(sample["source_path"])
+        return send_transformed_query_image(sample["source_path"], image_id=image_id)
     return send_transformed_query_image(
         resolve_image_path(
             image_id,
