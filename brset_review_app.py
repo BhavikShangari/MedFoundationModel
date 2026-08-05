@@ -216,6 +216,16 @@ RARE_LHON_ANOMALY_DIRS = {
     "dinomaly_h": ROOT / "anomaly_maps_rare_disease_test_normal/anomaly_scan/LHON",
     "dinomaly_hd": ROOT / "anomaly_maps_rare_disease_test_allclasses/anomaly_scan/LHON",
 }
+RARE_LHON_RETRIEVAL_CONFIG = {
+    "dinomaly_h": {
+        "folder": ROOT / "rare_normal",
+        "test_names": "brset_normal_rare_test_name.pkl",
+    },
+    "dinomaly_hd": {
+        "folder": ROOT / "rare_normal_disease",
+        "test_names": "brset_normal_disease_rare_test_name.pkl",
+    },
+}
 
 
 def runtime_data_dir() -> Path:
@@ -331,6 +341,55 @@ def rare_lhon_anomaly_path(image_id: Any, model_key: Any) -> Path | None:
         return None
     path = directory / sample["anomaly_name"]
     return path if path.exists() else None
+
+
+def rare_lhon_retrieval_config(model_key: Any) -> dict[str, Any] | None:
+    return RARE_LHON_RETRIEVAL_CONFIG.get(dinomaly_model_key(model_key))
+
+
+def rare_lhon_retrieval_file(model_key: Any, filename: str) -> Path | None:
+    config = rare_lhon_retrieval_config(model_key)
+    if config is None:
+        return None
+    return config["folder"] / filename
+
+
+@lru_cache(maxsize=None)
+def rare_lhon_retrieval_test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
+    config = rare_lhon_retrieval_config(model_key)
+    if config is None:
+        return []
+    path = config["folder"] / config["test_names"]
+    if not path.exists():
+        return []
+    return [Path(str(name)).name for name in load_pickle(path)]
+
+
+@lru_cache(maxsize=None)
+def rare_lhon_indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    path = rare_lhon_retrieval_file(model_key, "indices_data.pkl")
+    if path is None or not path.exists():
+        return np.asarray([])
+    return np.asarray(load_pickle(path))
+
+
+@lru_cache(maxsize=None)
+def rare_lhon_similarities(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    path = rare_lhon_retrieval_file(model_key, "similarity_data.pkl")
+    if path is None or not path.exists():
+        return np.asarray([])
+    return np.asarray(load_pickle(path))
+
+
+def rare_lhon_retrieval_index(image_id: Any, model_key: Any) -> int | None:
+    sample = rare_lhon_sample(image_id)
+    if sample is None:
+        return None
+    names = rare_lhon_retrieval_test_names(dinomaly_model_key(model_key))
+    try:
+        return names.index(sample["source_path"].name)
+    except ValueError:
+        return None
 
 
 def dinomaly_model_key(value: Any = None) -> str:
@@ -887,16 +946,37 @@ def next_unanswered(answered: set[str], start_index: int = 0, model_key: str = D
 def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
     model_key = dinomaly_model_key(model_key)
     names = test_names(model_key)
-    if test_index >= len(names) or is_rare_lhon_case(names[test_index]):
+    if test_index >= len(names):
         return []
+    image_id = names[test_index]
+    rare_index = rare_lhon_retrieval_index(image_id, model_key)
+    if rare_index is not None:
+        rare_indices_array = rare_lhon_indices(model_key)
+        rare_similarities_array = rare_lhon_similarities(model_key)
+        if rare_index >= len(rare_indices_array) or rare_index >= len(rare_similarities_array):
+            return []
+        rows = []
+        for rank, train_index in enumerate(rare_indices_array[rare_index].tolist()[:top_k], start=1):
+            retrieved_image_id = train_names(model_key)[int(train_index)]
+            row = metadata_lookup(retrieved_image_id)
+            rows.append(
+                {
+                    "rank": rank,
+                    "image_id": retrieved_image_id,
+                    "similarity": float(rare_similarities_array[rare_index][rank - 1]),
+                    "diseases": present_diseases(row),
+                }
+            )
+        return rows
+
     rows = []
     for rank, train_index in enumerate(indices(model_key)[test_index].tolist()[:top_k], start=1):
-        image_id = train_names(model_key)[int(train_index)]
-        row = metadata_lookup(image_id)
+        retrieved_image_id = train_names(model_key)[int(train_index)]
+        row = metadata_lookup(retrieved_image_id)
         rows.append(
             {
                 "rank": rank,
-                "image_id": image_id,
+                "image_id": retrieved_image_id,
                 "similarity": float(similarities(model_key)[test_index][rank - 1]),
                 "diseases": present_diseases(row),
             }
