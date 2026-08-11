@@ -1734,17 +1734,12 @@ PROFILE_BODY = """
     <div class="profile-grid">
       <div class="field"><label>Doctor name</label><input name="doctor_name" required></div>
       <div class="field"><label>Designation</label><input name="designation" required></div>
-      <div class="field"><label>Department / unit</label><input name="department"></div>
       <div class="field"><label>Years of experience</label><input name="years_experience" type="number" min="0" max="70" value="0"></div>
-      <div class="field"><label>Hospital name</label><input name="hospital_name" required></div>
-      <div class="field"><label>Posting / location</label><input name="posting_location"></div>
-      <div class="field"><label>Medical registration ID</label><input name="registration_id"></div>
       <div class="field">
         <label>Email</label>
         <input name="contact" type="email" required>
         <div class="help-text">(Use the same email to continue sessions.)</div>
       </div>
-      <div class="field span-2"><label>Session notes</label><textarea name="session_notes"></textarea></div>
     </div>
     <button class="btn" type="submit">Continue</button>
   </form>
@@ -1764,7 +1759,8 @@ ARM_SELECTION_BODY = """
     <div class="panel-title">Reviewer</div>
     <div class="metrics" style="margin-bottom:16px;">
       <div class="metric"><div class="metric-label">Doctor</div><div class="metric-value">{{ submitted.doctor_name }}</div></div>
-      <div class="metric"><div class="metric-label">Hospital</div><div class="metric-value">{{ submitted.hospital_name }}</div></div>
+      <div class="metric"><div class="metric-label">Designation</div><div class="metric-value">{{ submitted.designation }}</div></div>
+      <div class="metric"><div class="metric-label">Experience</div><div class="metric-value">{{ submitted.years_experience }} years</div></div>
       <div class="metric"><div class="metric-label">Email</div><div class="metric-value">{{ submitted.contact }}</div></div>
     </div>
     <div class="panel-title">Review arm status for this email</div>
