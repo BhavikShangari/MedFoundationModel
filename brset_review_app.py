@@ -74,6 +74,7 @@ METHOD_MODES = {"combined"}
 MODEL_SCOPED_MODES = {"combined"}
 DINOMALY_RETRIEVAL_COUNT = 5
 DINOMALY_PREDICTION_MIN_VOTES = 3
+CASE_ORDER_SEED = 20260814
 CERTAINTY_LEVELS = ("low", "medium", "high")
 DISPLAY_LABELS = {
     "optic_nerve_edema": "optic nerve edema",
@@ -496,39 +497,13 @@ def canonical_test_index(image_id: Any, model_key: str = DEFAULT_DINOMALY_MODEL)
     return test_name_index(model_key).get(normalize_image_id(image_id))
 
 
-def build_case_order(model_key: str = DEFAULT_DINOMALY_MODEL, existing_order: Any = None) -> list[str]:
-    canonical_names = test_names(model_key)
-    canonical_set = set(canonical_names)
-    order: list[str] = []
-    seen: set[str] = set()
-
-    if isinstance(existing_order, list):
-        for value in existing_order:
-            image_id = normalize_image_id(value)
-            if image_id in canonical_set and image_id not in seen:
-                order.append(image_id)
-                seen.add(image_id)
-
-    missing = [image_id for image_id in canonical_names if image_id not in seen]
-    random.shuffle(missing)
-    if not order:
-        return missing
-    return [*order, *missing]
-
-
-def ensure_session_case_order(
-    sessions: dict[str, dict[str, Any]],
-    session_id: str,
-    model_key: str = DEFAULT_DINOMALY_MODEL,
-) -> list[str]:
-    session_data = sessions[session_id]
-    current_order = session_data.get("case_order")
-    case_order = build_case_order(model_key, current_order)
-    if current_order != case_order:
-        session_data["case_order"] = case_order
-        session_data["updated_at"] = now()
-        save_sessions(sessions)
-    return case_order
+@lru_cache(maxsize=None)
+def display_test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
+    model_key = dinomaly_model_key(model_key)
+    names = list(test_names(model_key))
+    rng = random.Random(f"{CASE_ORDER_SEED}:{model_key}")
+    rng.shuffle(names)
+    return names
 
 
 def cfp_rare_retrieval_dir(model_key: Any = None) -> Path:
@@ -797,7 +772,6 @@ def session_profile_from_form(
     else:
         model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     total_cases = len(test_names(model_key))
-    case_order = build_case_order(model_key, existing.get("case_order"))
     start_index = existing.get("start_index")
     if start_index in {"", None}:
         start_index = 0
@@ -821,7 +795,6 @@ def session_profile_from_form(
         "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "",
         "review_arm": arm_key(model_key, mode),
         "review_arm_label": arm_label(model_key, mode),
-        "case_order": case_order,
         "start_index": start_index,
         "session_notes": form.get("session_notes", ""),
         "created_at": existing.get("created_at", existing.get("updated_at", now())),
@@ -2476,7 +2449,7 @@ def start() -> str | Response:
     answered = answered_ids(session_id, mode, model_key)
     log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
     start_index = int(sessions[session_id].get("start_index", 0) or 0)
-    ordered_names = ensure_session_case_order(sessions, session_id, model_key)
+    ordered_names = display_test_names(model_key)
     return redirect(url_for("review", index=next_unanswered(answered, start_index, model_key=model_key, ordered_names=ordered_names)))
 
 
@@ -2497,7 +2470,7 @@ def review() -> str | Response:
     mode = session_mode
     selected_arm = arm_option_for(model_key, mode)
     status_mode = scoped_mode(mode, model_key)
-    names = ensure_session_case_order(sessions, session_id, model_key)
+    names = display_test_names(model_key)
     total_cases = len(names)
     top_k = DINOMALY_RETRIEVAL_COUNT
     min_votes = DINOMALY_PREDICTION_MIN_VOTES
@@ -2582,7 +2555,7 @@ def save() -> Response:
         return redirect(url_for("profile"))
     model_key, mode = session_arm(sessions[session_id])
     status_mode = scoped_mode(mode, model_key)
-    names = ensure_session_case_order(sessions, session_id, model_key)
+    names = display_test_names(model_key)
     posted_image_id = normalize_image_id(form["image_id"])
     if not names or posted_image_id not in names:
         return Response("Invalid case image id for this review session", status=400)
