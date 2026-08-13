@@ -1592,18 +1592,27 @@ textarea { min-height: 96px; resize: vertical; }
   grid-template-columns: 1fr 1fr;
   gap: 18px;
   width: 100%;
+  align-items: stretch;
 }
 .zoom-panel {
   min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 10px;
 }
 .zoom-panel-title {
   color: #e2e8f0;
   font-weight: 760;
-  margin-bottom: 10px;
+}
+.zoom-panel-frame {
+  min-height: 72vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .zoom-compare-img {
   width: 100%;
-  height: auto;
+  max-height: 72vh;
   object-fit: contain;
   border-radius: 8px;
 }
@@ -1996,11 +2005,15 @@ COMPARE_ZOOM_BODY = """
     <div class="zoom-compare">
       <div class="zoom-panel">
         <div class="zoom-panel-title">Scan</div>
-        <img class="zoom-compare-img" src="{{ scan_url }}" alt="Scan">
+        <div class="zoom-panel-frame">
+          <img class="zoom-compare-img" src="{{ scan_url }}" alt="Scan">
+        </div>
       </div>
       <div class="zoom-panel">
         <div class="zoom-panel-title">Anomaly map</div>
-        <img class="zoom-compare-img" src="{{ anomaly_url }}" alt="Anomaly map">
+        <div class="zoom-panel-frame">
+          <img class="zoom-compare-img" src="{{ anomaly_url }}" alt="Anomaly map">
+        </div>
       </div>
     </div>
   </div>
