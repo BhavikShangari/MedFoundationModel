@@ -1740,6 +1740,23 @@ function syncDiseaseSelection(checkbox) {
   if (!item) return;
   item.classList.toggle("selected", checkbox.checked);
 }
+function normalizeDiseaseSelection(changed) {
+  const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"][name="diseases"]'));
+  if (changed.value === "No Disease" && changed.checked) {
+    checkboxes.forEach((checkbox) => {
+      if (checkbox !== changed) {
+        checkbox.checked = false;
+        syncDiseaseSelection(checkbox);
+      }
+    });
+  } else if (changed.checked) {
+    const noDisease = checkboxes.find((checkbox) => checkbox.value === "No Disease");
+    if (noDisease) {
+      noDisease.checked = false;
+      syncDiseaseSelection(noDisease);
+    }
+  }
+}
 function setupReviewTimer() {
   const input = document.querySelector('input[name="review_time_seconds"]');
   const value = document.querySelector("[data-review-timer-value]");
@@ -1769,6 +1786,7 @@ function setupReviewTimer() {
 document.addEventListener("change", function (event) {
   const target = event.target;
   if (target.matches('input[type="checkbox"][name="diseases"]')) {
+    normalizeDiseaseSelection(target);
     syncDiseaseSelection(target);
   }
 });
@@ -2610,6 +2628,8 @@ def save() -> Response:
     row = metadata_lookup(image_id)
     true_diseases = true_diseases_for_case(image_id, row)
     selected = request.form.getlist("diseases")
+    if NO_DISEASE_OPTION in selected and len(selected) > 1:
+        selected = [NO_DISEASE_OPTION]
     needs_recheck = action == "save_recheck_next"
     selected_diseases = [
         disease for disease in selected if disease != NO_DISEASE_OPTION
