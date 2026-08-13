@@ -2583,15 +2583,14 @@ def save() -> Response:
     model_key, mode = session_arm(sessions[session_id])
     status_mode = scoped_mode(mode, model_key)
     names = ensure_session_case_order(sessions, session_id, model_key)
-    index = int(form["index"])
-    index = max(0, min(len(names) - 1, index)) if names else 0
     posted_image_id = normalize_image_id(form["image_id"])
-    if names and names[index] != posted_image_id and posted_image_id in names:
-        index = names.index(posted_image_id)
-    image_id = names[index] if names else posted_image_id
+    if not names or posted_image_id not in names:
+        return Response("Invalid case image id for this review session", status=400)
+    image_id = posted_image_id
+    index = names.index(image_id)
     canonical_index = canonical_test_index(image_id, model_key)
     if canonical_index is None:
-        return redirect(url_for("profile"))
+        return Response("Invalid canonical case index", status=400)
     top_k = DINOMALY_RETRIEVAL_COUNT
     min_votes = DINOMALY_PREDICTION_MIN_VOTES
     action = form.get("action", "save_next")
