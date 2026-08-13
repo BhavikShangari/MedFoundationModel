@@ -209,6 +209,8 @@ ARM_OPTIONS = [
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
+CFP_RARE_ID_PREFIX = "cfp_rare_"
+CFP_RARE_SOURCE_DIR = ROOT / "CFP for rare eye diseases"
 
 
 def runtime_data_dir() -> Path:
@@ -267,6 +269,8 @@ def resampling_filter() -> Any:
 
 def normalize_image_id(value: Any) -> str:
     image_id = str(value)
+    if image_id.startswith(CFP_RARE_ID_PREFIX):
+        return image_id
     if image_id.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff")):
         return Path(image_id).stem
     return image_id
@@ -279,6 +283,33 @@ def now() -> str:
 def load_pickle(path: Path) -> Any:
     with path.open("rb") as handle:
         return pickle.load(handle)
+
+
+@lru_cache(maxsize=1)
+def cfp_rare_samples() -> list[dict[str, Any]]:
+    if not CFP_RARE_SOURCE_DIR.exists():
+        return []
+    paths = sorted(
+        path
+        for path in CFP_RARE_SOURCE_DIR.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    )
+    return [
+        {
+            "image_id": f"{CFP_RARE_ID_PREFIX}{index:03d}",
+            "label": path.parent.name,
+            "source_path": path,
+        }
+        for index, path in enumerate(paths, start=1)
+    ]
+
+
+def cfp_rare_sample(image_id: Any) -> dict[str, Any] | None:
+    normalized = normalize_image_id(image_id)
+    for sample in cfp_rare_samples():
+        if sample["image_id"] == normalized:
+            return sample
+    return None
 
 
 def dinomaly_model_key(value: Any = None) -> str:
@@ -364,6 +395,7 @@ def metadata_df() -> pd.DataFrame:
 
 @lru_cache(maxsize=None)
 def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
+    raw_model_key = str(model_key or DEFAULT_DINOMALY_MODEL)
     model_key = dinomaly_model_key(model_key)
     test_image_dir = model_test_image_dir(model_key)
     folder_names = sorted(
@@ -375,6 +407,8 @@ def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
         base_names = folder_names
     else:
         base_names = [normalize_image_id(name) for name in load_pickle(model_file(model_key, "test_names"))]
+    if raw_model_key == HUMAN_MODEL_KEY:
+        return [*base_names, *[sample["image_id"] for sample in cfp_rare_samples()]]
     return base_names
 
 
@@ -408,6 +442,9 @@ def present_diseases(row: pd.Series | None) -> list[str]:
 
 
 def true_diseases_for_case(image_id: str, row: pd.Series | None) -> list[str]:
+    sample = cfp_rare_sample(image_id)
+    if sample is not None:
+        return [sample["label"]]
     return present_diseases(row)
 
 
@@ -2443,8 +2480,8 @@ def save() -> Response:
         "retrieved_similarities": [round(float(item["similarity"]), 6) for item in retrieved],
         "retrieved_diseases_json": {item["image_id"]: item["diseases"] for item in retrieved},
         "true_diseases_hidden_from_reviewer": true_diseases,
-        "true_disease_count": "" if row is None else int(row["disease_count"]),
-        "true_disease_category": "" if row is None else str(row["disease_category"]),
+        "true_disease_count": len(true_diseases) if cfp_rare_sample(image_id) is not None else ("" if row is None else int(row["disease_count"])),
+        "true_disease_category": "rare_disease" if cfp_rare_sample(image_id) is not None else ("" if row is None else str(row["disease_category"])),
     }
     upsert_response(response)
     mark_case_status(session_id, status_mode, image_id, "saved", needs_recheck=needs_recheck)
@@ -2458,6 +2495,9 @@ def save() -> Response:
 
 @app.get("/scan/<image_id>")
 def scan_image(image_id: str) -> Response:
+    sample = cfp_rare_sample(image_id)
+    if sample is not None:
+        return send_transformed_query_image(sample["source_path"], image_id=image_id)
     return send_transformed_query_image(
         resolve_image_path(
             image_id,
