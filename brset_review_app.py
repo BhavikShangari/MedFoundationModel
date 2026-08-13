@@ -34,6 +34,11 @@ DISEASE_COLUMNS = [
 ]
 
 NO_DISEASE_OPTION = "No Disease"
+RARE_DISEASE_OPTIONS = [
+    "optic_nerve_edema",
+    "optic_nerve_hypoplasia",
+    "retinitis_pigmentosa",
+]
 DISEASE_DIAGNOSIS_OPTIONS = [
     "diabetic_retinopathy",
     "macular_edema",
@@ -43,6 +48,7 @@ DISEASE_DIAGNOSIS_OPTIONS = [
     "hypertensive_retinopathy",
     "retinal_detachment",
     "myopic_fundus",
+    *RARE_DISEASE_OPTIONS,
     "other",
 ]
 SIGN_FINDING_OPTIONS = [
@@ -69,6 +75,12 @@ MODEL_SCOPED_MODES = {"combined"}
 DINOMALY_RETRIEVAL_COUNT = 5
 DINOMALY_PREDICTION_MIN_VOTES = 3
 CERTAINTY_LEVELS = ("low", "medium", "high")
+DISPLAY_LABELS = {
+    "optic_nerve_edema": "optic nerve edema",
+    "optic_nerve_hypoplasia": "Optic nerve hypoplasia",
+    "retinitis_pigmentosa": "Retinitis pigmentosa (RP)",
+    "other": "Other Disease",
+}
 
 
 def assessment_field_name(label: str) -> str:
@@ -76,7 +88,7 @@ def assessment_field_name(label: str) -> str:
 
 
 def disease_display_label(label: str) -> str:
-    return "Other Disease" if label == "other" else label
+    return DISPLAY_LABELS.get(label, label)
 
 
 def parse_assessment_list(value: Any) -> list[str]:
@@ -211,6 +223,25 @@ BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
 CFP_RARE_ID_PREFIX = "cfp_rare_"
 CFP_RARE_SOURCE_DIR = ROOT / "CFP for rare eye diseases"
+CFP_RARE_LABEL_ALIASES = {
+    "Optic nerve edema, possible Idiopathic Intracranial Hypertension": "optic_nerve_edema",
+    "Optic Nerve Hypoplasia": "optic_nerve_hypoplasia",
+    "RP": "retinitis_pigmentosa",
+}
+CFP_RARE_ANOMALY_DIRS = {
+    "dinomaly_h": ROOT / "anomaly_maps_normal_cfp_for_rare_diseases/anomaly_scan",
+    "dinomaly_hd": ROOT / "anomaly_maps_allclasses_cfp_for_rare_diseases/anomaly_scan",
+}
+CFP_RARE_RETRIEVAL_CONFIG = {
+    "dinomaly_h": {
+        "folder": ROOT / "brset_ai_human/dinomaly_h/rare",
+        "test_names": "brset_normal_rare_test_name.pkl",
+    },
+    "dinomaly_hd": {
+        "folder": ROOT / "brset_ai_human/dinomaly_hd/rare",
+        "test_names": "brset_normal_disease_rare_test_name.pkl",
+    },
+}
 
 
 def runtime_data_dir() -> Path:
@@ -297,7 +328,9 @@ def cfp_rare_samples() -> list[dict[str, Any]]:
     return [
         {
             "image_id": f"{CFP_RARE_ID_PREFIX}{index:03d}",
-            "label": path.parent.name,
+            "label": CFP_RARE_LABEL_ALIASES.get(path.parent.name, path.parent.name),
+            "folder_name": path.parent.name,
+            "source_name": path.name,
             "source_path": path,
         }
         for index, path in enumerate(paths, start=1)
@@ -310,6 +343,15 @@ def cfp_rare_sample(image_id: Any) -> dict[str, Any] | None:
         if sample["image_id"] == normalized:
             return sample
     return None
+
+
+def cfp_rare_lookup_key_from_path(path_value: Any) -> tuple[str, str]:
+    path = Path(str(path_value))
+    return path.parent.name, path.name
+
+
+def cfp_rare_lookup_key(sample: dict[str, Any]) -> tuple[str, str]:
+    return sample["folder_name"], sample["source_name"]
 
 
 def dinomaly_model_key(value: Any = None) -> str:
@@ -380,6 +422,23 @@ def model_anomaly_dir(model_key: Any = None) -> Path:
     return model_dir(model_key) / "anomaly_scan"
 
 
+def cfp_rare_anomaly_path(image_id: Any, model_key: Any = None) -> Path | None:
+    sample = cfp_rare_sample(image_id)
+    if sample is None:
+        return None
+    anomaly_dir = CFP_RARE_ANOMALY_DIRS.get(dinomaly_model_key(model_key))
+    if anomaly_dir is None:
+        return None
+    candidates = [
+        anomaly_dir / sample["folder_name"] / f"{sample['source_name']}.jpg",
+        anomaly_dir / sample["folder_name"] / sample["source_name"],
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def scoped_mode(mode: str, model_key: Any = None) -> str:
     if mode in MODEL_SCOPED_MODES:
         return f"{mode}:{dinomaly_model_key(model_key)}"
@@ -395,7 +454,6 @@ def metadata_df() -> pd.DataFrame:
 
 @lru_cache(maxsize=None)
 def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
-    raw_model_key = str(model_key or DEFAULT_DINOMALY_MODEL)
     model_key = dinomaly_model_key(model_key)
     test_image_dir = model_test_image_dir(model_key)
     folder_names = sorted(
@@ -407,9 +465,7 @@ def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
         base_names = folder_names
     else:
         base_names = [normalize_image_id(name) for name in load_pickle(model_file(model_key, "test_names"))]
-    if raw_model_key == HUMAN_MODEL_KEY:
-        return [*base_names, *[sample["image_id"] for sample in cfp_rare_samples()]]
-    return base_names
+    return [*base_names, *[sample["image_id"] for sample in cfp_rare_samples()]]
 
 
 @lru_cache(maxsize=None)
@@ -426,6 +482,51 @@ def similarities(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
 @lru_cache(maxsize=None)
 def indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
     return np.asarray(load_pickle(model_dir(model_key) / "indices_data.pkl"))
+
+
+def cfp_rare_retrieval_dir(model_key: Any = None) -> Path:
+    return CFP_RARE_RETRIEVAL_CONFIG[dinomaly_model_key(model_key)]["folder"]
+
+
+@lru_cache(maxsize=None)
+def cfp_rare_retrieval_test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[Any]:
+    model_key = dinomaly_model_key(model_key)
+    config = CFP_RARE_RETRIEVAL_CONFIG[model_key]
+    path = config["folder"] / config["test_names"]
+    if not path.exists():
+        return []
+    return list(load_pickle(path))
+
+
+@lru_cache(maxsize=None)
+def cfp_rare_retrieval_lookup(model_key: str = DEFAULT_DINOMALY_MODEL) -> dict[tuple[str, str], int]:
+    return {
+        cfp_rare_lookup_key_from_path(path): index
+        for index, path in enumerate(cfp_rare_retrieval_test_names(model_key))
+    }
+
+
+def cfp_rare_retrieval_index(image_id: Any, model_key: Any = None) -> int | None:
+    sample = cfp_rare_sample(image_id)
+    if sample is None:
+        return None
+    return cfp_rare_retrieval_lookup(dinomaly_model_key(model_key)).get(cfp_rare_lookup_key(sample))
+
+
+@lru_cache(maxsize=None)
+def cfp_rare_similarities(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    path = cfp_rare_retrieval_dir(model_key) / "similarity_data.pkl"
+    if not path.exists():
+        return np.empty((0, 0))
+    return np.asarray(load_pickle(path))
+
+
+@lru_cache(maxsize=None)
+def cfp_rare_indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
+    path = cfp_rare_retrieval_dir(model_key) / "indices_data.pkl"
+    if not path.exists():
+        return np.empty((0, 0))
+    return np.asarray(load_pickle(path))
 
 
 def metadata_lookup(image_id: str) -> pd.Series | None:
@@ -872,15 +973,32 @@ def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMAL
     names = test_names(model_key)
     if test_index >= len(names):
         return []
+    image_id = names[test_index]
+    rare_index = cfp_rare_retrieval_index(image_id, model_key)
+    if rare_index is not None:
+        retrieval_indices = cfp_rare_indices(model_key)
+        retrieval_similarities = cfp_rare_similarities(model_key)
+        if rare_index >= len(retrieval_indices):
+            return []
+        index_row = retrieval_indices[rare_index]
+        similarity_row = retrieval_similarities[rare_index] if rare_index < len(retrieval_similarities) else []
+    else:
+        retrieval_indices = indices(model_key)
+        retrieval_similarities = similarities(model_key)
+        if test_index >= len(retrieval_indices):
+            return []
+        index_row = retrieval_indices[test_index]
+        similarity_row = retrieval_similarities[test_index] if test_index < len(retrieval_similarities) else []
     rows = []
-    for rank, train_index in enumerate(indices(model_key)[test_index].tolist()[:top_k], start=1):
+    for rank, train_index in enumerate(index_row.tolist()[:top_k], start=1):
         retrieved_image_id = train_names(model_key)[int(train_index)]
         row = metadata_lookup(retrieved_image_id)
+        similarity = float(similarity_row[rank - 1]) if rank - 1 < len(similarity_row) else 0.0
         rows.append(
             {
                 "rank": rank,
                 "image_id": retrieved_image_id,
-                "similarity": float(similarities(model_key)[test_index][rank - 1]),
+                "similarity": similarity,
                 "diseases": present_diseases(row),
             }
         )
@@ -2511,6 +2629,9 @@ def scan_image(image_id: str) -> Response:
 @app.get("/anomaly/<image_id>")
 def anomaly_image(image_id: str) -> Response:
     model_key = dinomaly_model_key(request.args.get("model"))
+    rare_anomaly = cfp_rare_anomaly_path(image_id, model_key)
+    if rare_anomaly is not None:
+        return send_resolved_image(rare_anomaly)
     return send_resolved_image(
         resolve_image_path(image_id, [model_anomaly_dir(model_key)], recursive_dirs=[model_dir(model_key)])
     )
