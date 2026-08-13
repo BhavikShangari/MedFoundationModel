@@ -484,6 +484,53 @@ def indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
     return np.asarray(load_pickle(model_dir(model_key) / "indices_data.pkl"))
 
 
+@lru_cache(maxsize=None)
+def test_name_index(model_key: str = DEFAULT_DINOMALY_MODEL) -> dict[str, int]:
+    return {
+        image_id: index
+        for index, image_id in enumerate(test_names(model_key))
+    }
+
+
+def canonical_test_index(image_id: Any, model_key: str = DEFAULT_DINOMALY_MODEL) -> int | None:
+    return test_name_index(model_key).get(normalize_image_id(image_id))
+
+
+def build_case_order(model_key: str = DEFAULT_DINOMALY_MODEL, existing_order: Any = None) -> list[str]:
+    canonical_names = test_names(model_key)
+    canonical_set = set(canonical_names)
+    order: list[str] = []
+    seen: set[str] = set()
+
+    if isinstance(existing_order, list):
+        for value in existing_order:
+            image_id = normalize_image_id(value)
+            if image_id in canonical_set and image_id not in seen:
+                order.append(image_id)
+                seen.add(image_id)
+
+    missing = [image_id for image_id in canonical_names if image_id not in seen]
+    random.shuffle(missing)
+    if not order:
+        return missing
+    return [*order, *missing]
+
+
+def ensure_session_case_order(
+    sessions: dict[str, dict[str, Any]],
+    session_id: str,
+    model_key: str = DEFAULT_DINOMALY_MODEL,
+) -> list[str]:
+    session_data = sessions[session_id]
+    current_order = session_data.get("case_order")
+    case_order = build_case_order(model_key, current_order)
+    if current_order != case_order:
+        session_data["case_order"] = case_order
+        session_data["updated_at"] = now()
+        save_sessions(sessions)
+    return case_order
+
+
 def cfp_rare_retrieval_dir(model_key: Any = None) -> Path:
     return CFP_RARE_RETRIEVAL_CONFIG[dinomaly_model_key(model_key)]["folder"]
 
@@ -750,6 +797,7 @@ def session_profile_from_form(
     else:
         model_key, mode = parse_arm_key(form.get("review_arm") or arm_key(form.get("dinomaly_model"), form.get("mode")))
     total_cases = len(test_names(model_key))
+    case_order = build_case_order(model_key, existing.get("case_order"))
     start_index = existing.get("start_index")
     if start_index in {"", None}:
         start_index = 0
@@ -773,6 +821,7 @@ def session_profile_from_form(
         "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "",
         "review_arm": arm_key(model_key, mode),
         "review_arm_label": arm_label(model_key, mode),
+        "case_order": case_order,
         "start_index": start_index,
         "session_notes": form.get("session_notes", ""),
         "created_at": existing.get("created_at", existing.get("updated_at", now())),
@@ -960,12 +1009,21 @@ def saved_response(session_id: str, mode: str, image_id: str, model_key: str = D
     return None
 
 
-def next_unanswered(answered: set[str], start_index: int = 0, model_key: str = DEFAULT_DINOMALY_MODEL) -> int:
-    names = test_names(model_key)
-    for index, image_id in enumerate(names):
-        if image_id not in answered:
+def next_unanswered(
+    answered: set[str],
+    start_index: int = 0,
+    model_key: str = DEFAULT_DINOMALY_MODEL,
+    ordered_names: list[str] | None = None,
+) -> int:
+    names = ordered_names or test_names(model_key)
+    if not names:
+        return 0
+    start_index = min(max(start_index, 0), len(names) - 1)
+    for offset in range(len(names)):
+        index = (start_index + offset) % len(names)
+        if names[index] not in answered:
             return index
-    return min(max(start_index, 0), len(names) - 1) if names else 0
+    return start_index
 
 
 def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
@@ -2268,7 +2326,13 @@ def csv_response(rows: list[dict[str, str]], columns: list[str], filename: str) 
     )
 
 
-def case_cells_for(session_id: str, mode: str, current_index: int, model_key: str = DEFAULT_DINOMALY_MODEL) -> list[dict[str, Any]]:
+def case_cells_for(
+    session_id: str,
+    mode: str,
+    current_index: int,
+    model_key: str = DEFAULT_DINOMALY_MODEL,
+    ordered_names: list[str] | None = None,
+) -> list[dict[str, Any]]:
     statuses = load_case_statuses()
     status_mode = scoped_mode(mode, model_key)
     answered = answered_ids(session_id, mode, model_key)
@@ -2279,7 +2343,7 @@ def case_cells_for(session_id: str, mode: str, current_index: int, model_key: st
         "recheck": "saved, marked for recheck",
     }
     cells = []
-    for idx, image_id in enumerate(test_names(model_key)):
+    for idx, image_id in enumerate(ordered_names or test_names(model_key)):
         status = case_status_for(session_id, status_mode, image_id, answered, statuses)
         cells.append(
             {
@@ -2412,7 +2476,8 @@ def start() -> str | Response:
     answered = answered_ids(session_id, mode, model_key)
     log_event(event, {**sessions[session_id], "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(answered), "total_cases": len(test_names(model_key))})
     start_index = int(sessions[session_id].get("start_index", 0) or 0)
-    return redirect(url_for("review", index=next_unanswered(answered, start_index, model_key=model_key)))
+    ordered_names = ensure_session_case_order(sessions, session_id, model_key)
+    return redirect(url_for("review", index=next_unanswered(answered, start_index, model_key=model_key, ordered_names=ordered_names)))
 
 
 @app.get("/review")
@@ -2432,19 +2497,22 @@ def review() -> str | Response:
     mode = session_mode
     selected_arm = arm_option_for(model_key, mode)
     status_mode = scoped_mode(mode, model_key)
-    names = test_names(model_key)
+    names = ensure_session_case_order(sessions, session_id, model_key)
     total_cases = len(names)
     top_k = DINOMALY_RETRIEVAL_COUNT
     min_votes = DINOMALY_PREDICTION_MIN_VOTES
     answered = answered_ids(session_id, mode, model_key)
     index_arg = request.args.get("index")
-    index = next_unanswered(answered, model_key=model_key) if index_arg is None else int(index_arg)
+    index = next_unanswered(answered, model_key=model_key, ordered_names=names) if index_arg is None else int(index_arg)
     index = max(0, min(total_cases - 1, index))
     image_id = names[index]
+    canonical_index = canonical_test_index(image_id, model_key)
+    if canonical_index is None:
+        return redirect(url_for("profile"))
     row = metadata_lookup(image_id)
     if image_id not in answered:
         mark_case_status(session_id, status_mode, image_id, "opened", needs_recheck=False)
-    retrieved = retrieval_rows(index, top_k, model_key) if mode in METHOD_MODES else []
+    retrieved = retrieval_rows(canonical_index, top_k, model_key) if mode in METHOD_MODES else []
     prediction_min_votes = DINOMALY_PREDICTION_MIN_VOTES
     prediction = method_prediction(retrieved, prediction_min_votes)
     if mode in METHOD_MODES:
@@ -2481,7 +2549,7 @@ def review() -> str | Response:
         total_cases=total_cases,
         answered_count=len(answered),
         already_saved=image_id in answered,
-        case_cells=case_cells_for(session_id, mode, index, model_key),
+        case_cells=case_cells_for(session_id, mode, index, model_key, names),
         top_k=top_k,
         min_votes=min_votes,
         retrieved=retrieved,
@@ -2514,8 +2582,16 @@ def save() -> Response:
         return redirect(url_for("profile"))
     model_key, mode = session_arm(sessions[session_id])
     status_mode = scoped_mode(mode, model_key)
+    names = ensure_session_case_order(sessions, session_id, model_key)
     index = int(form["index"])
-    image_id = normalize_image_id(form["image_id"])
+    index = max(0, min(len(names) - 1, index)) if names else 0
+    posted_image_id = normalize_image_id(form["image_id"])
+    if names and names[index] != posted_image_id and posted_image_id in names:
+        index = names.index(posted_image_id)
+    image_id = names[index] if names else posted_image_id
+    canonical_index = canonical_test_index(image_id, model_key)
+    if canonical_index is None:
+        return redirect(url_for("profile"))
     top_k = DINOMALY_RETRIEVAL_COUNT
     min_votes = DINOMALY_PREDICTION_MIN_VOTES
     action = form.get("action", "save_next")
@@ -2537,7 +2613,7 @@ def save() -> Response:
                 "case_number": index + 1,
                 "deleted": deleted,
                 "answered_count": len(answered_ids(session_id, mode, model_key)),
-                "total_cases": len(test_names(model_key)),
+                "total_cases": len(names),
             },
         )
         return redirect(
@@ -2551,7 +2627,7 @@ def save() -> Response:
             )
         )
 
-    retrieved = retrieval_rows(index, top_k, model_key) if mode in METHOD_MODES else []
+    retrieved = retrieval_rows(canonical_index, top_k, model_key) if mode in METHOD_MODES else []
     prediction = {"predicted": [], "evidence": []}
     if mode in METHOD_MODES:
         prediction_min_votes = DINOMALY_PREDICTION_MIN_VOTES
@@ -2617,11 +2693,11 @@ def save() -> Response:
     upsert_response(response)
     mark_case_status(session_id, status_mode, image_id, "saved", needs_recheck=needs_recheck)
     updated_answered = answered_ids(session_id, mode, model_key)
-    total_cases = len(test_names(model_key))
+    total_cases = len(names)
     log_event("save_response", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "case_number": index + 1, "image_id": image_id, "answered_count": len(updated_answered), "total_cases": total_cases})
     if len(updated_answered) == total_cases:
         log_event("complete_session", {**doctor, "mode": mode, "dinomaly_model": model_key if mode in MODEL_SCOPED_MODES else "", "answered_count": len(updated_answered), "total_cases": total_cases})
-    return redirect(url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=next_unanswered(updated_answered, index + 1, model_key=model_key)))
+    return redirect(url_for("review", mode=mode, model=model_key, top_k=top_k, min_votes=min_votes, index=next_unanswered(updated_answered, index + 1, model_key=model_key, ordered_names=names)))
 
 
 @app.get("/scan/<image_id>")
