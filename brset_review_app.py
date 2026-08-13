@@ -209,23 +209,6 @@ ARM_OPTIONS = [
 METADATA_CSV = ROOT / "brset_ai_human/brset_dataset_distribution.csv"
 BRSET_DIR = ROOT / "brset_ai_human/BRSET"
 RETRIEVAL_IMAGE_DIR = ROOT / "brset_ai_human/BRSET/fundus_photos"
-RARE_LHON_ID_PREFIX = "rare_lhon_"
-RARE_LHON_LABEL = "LHON"
-RARE_LHON_SOURCE_DIR = ROOT / "Rare Disease/LHON"
-RARE_LHON_ANOMALY_DIRS = {
-    "dinomaly_h": ROOT / "anomaly_maps_rare_disease_test_normal/anomaly_scan/LHON",
-    "dinomaly_hd": ROOT / "anomaly_maps_rare_disease_test_allclasses/anomaly_scan/LHON",
-}
-RARE_LHON_RETRIEVAL_CONFIG = {
-    "dinomaly_h": {
-        "folder": ROOT / "rare_normal",
-        "test_names": "brset_normal_rare_test_name.pkl",
-    },
-    "dinomaly_hd": {
-        "folder": ROOT / "rare_normal_disease",
-        "test_names": "brset_normal_disease_rare_test_name.pkl",
-    },
-}
 
 
 def runtime_data_dir() -> Path:
@@ -284,8 +267,6 @@ def resampling_filter() -> Any:
 
 def normalize_image_id(value: Any) -> str:
     image_id = str(value)
-    if image_id.startswith(RARE_LHON_ID_PREFIX):
-        return image_id
     if image_id.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff")):
         return Path(image_id).stem
     return image_id
@@ -298,98 +279,6 @@ def now() -> str:
 def load_pickle(path: Path) -> Any:
     with path.open("rb") as handle:
         return pickle.load(handle)
-
-
-@lru_cache(maxsize=1)
-def rare_lhon_samples() -> list[dict[str, Any]]:
-    if not RARE_LHON_SOURCE_DIR.exists():
-        return []
-    paths = sorted(
-        path
-        for path in RARE_LHON_SOURCE_DIR.iterdir()
-        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-    )
-    return [
-        {
-            "image_id": f"{RARE_LHON_ID_PREFIX}{index:03d}",
-            "label": RARE_LHON_LABEL,
-            "source_path": path,
-            "anomaly_name": f"{path.name}.jpg",
-        }
-        for index, path in enumerate(paths, start=1)
-    ]
-
-
-def rare_lhon_sample(image_id: Any) -> dict[str, Any] | None:
-    normalized = normalize_image_id(image_id)
-    for sample in rare_lhon_samples():
-        if sample["image_id"] == normalized:
-            return sample
-    return None
-
-
-def is_rare_lhon_case(image_id: Any) -> bool:
-    return rare_lhon_sample(image_id) is not None
-
-
-def rare_lhon_anomaly_path(image_id: Any, model_key: Any) -> Path | None:
-    sample = rare_lhon_sample(image_id)
-    if sample is None:
-        return None
-    directory = RARE_LHON_ANOMALY_DIRS.get(dinomaly_model_key(model_key))
-    if directory is None:
-        return None
-    path = directory / sample["anomaly_name"]
-    return path if path.exists() else None
-
-
-def rare_lhon_retrieval_config(model_key: Any) -> dict[str, Any] | None:
-    return RARE_LHON_RETRIEVAL_CONFIG.get(dinomaly_model_key(model_key))
-
-
-def rare_lhon_retrieval_file(model_key: Any, filename: str) -> Path | None:
-    config = rare_lhon_retrieval_config(model_key)
-    if config is None:
-        return None
-    return config["folder"] / filename
-
-
-@lru_cache(maxsize=None)
-def rare_lhon_retrieval_test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
-    config = rare_lhon_retrieval_config(model_key)
-    if config is None:
-        return []
-    path = config["folder"] / config["test_names"]
-    if not path.exists():
-        return []
-    return [Path(str(name)).name for name in load_pickle(path)]
-
-
-@lru_cache(maxsize=None)
-def rare_lhon_indices(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
-    path = rare_lhon_retrieval_file(model_key, "indices_data.pkl")
-    if path is None or not path.exists():
-        return np.asarray([])
-    return np.asarray(load_pickle(path))
-
-
-@lru_cache(maxsize=None)
-def rare_lhon_similarities(model_key: str = DEFAULT_DINOMALY_MODEL) -> np.ndarray:
-    path = rare_lhon_retrieval_file(model_key, "similarity_data.pkl")
-    if path is None or not path.exists():
-        return np.asarray([])
-    return np.asarray(load_pickle(path))
-
-
-def rare_lhon_retrieval_index(image_id: Any, model_key: Any) -> int | None:
-    sample = rare_lhon_sample(image_id)
-    if sample is None:
-        return None
-    names = rare_lhon_retrieval_test_names(dinomaly_model_key(model_key))
-    try:
-        return names.index(sample["source_path"].name)
-    except ValueError:
-        return None
 
 
 def dinomaly_model_key(value: Any = None) -> str:
@@ -486,7 +375,7 @@ def test_names(model_key: str = DEFAULT_DINOMALY_MODEL) -> list[str]:
         base_names = folder_names
     else:
         base_names = [normalize_image_id(name) for name in load_pickle(model_file(model_key, "test_names"))]
-    return [*base_names, *[sample["image_id"] for sample in rare_lhon_samples()]]
+    return base_names
 
 
 @lru_cache(maxsize=None)
@@ -519,8 +408,6 @@ def present_diseases(row: pd.Series | None) -> list[str]:
 
 
 def true_diseases_for_case(image_id: str, row: pd.Series | None) -> list[str]:
-    if is_rare_lhon_case(image_id):
-        return [RARE_LHON_LABEL]
     return present_diseases(row)
 
 
@@ -948,27 +835,6 @@ def retrieval_rows(test_index: int, top_k: int, model_key: str = DEFAULT_DINOMAL
     names = test_names(model_key)
     if test_index >= len(names):
         return []
-    image_id = names[test_index]
-    rare_index = rare_lhon_retrieval_index(image_id, model_key)
-    if rare_index is not None:
-        rare_indices_array = rare_lhon_indices(model_key)
-        rare_similarities_array = rare_lhon_similarities(model_key)
-        if rare_index >= len(rare_indices_array) or rare_index >= len(rare_similarities_array):
-            return []
-        rows = []
-        for rank, train_index in enumerate(rare_indices_array[rare_index].tolist()[:top_k], start=1):
-            retrieved_image_id = train_names(model_key)[int(train_index)]
-            row = metadata_lookup(retrieved_image_id)
-            rows.append(
-                {
-                    "rank": rank,
-                    "image_id": retrieved_image_id,
-                    "similarity": float(rare_similarities_array[rare_index][rank - 1]),
-                    "diseases": present_diseases(row),
-                }
-            )
-        return rows
-
     rows = []
     for rank, train_index in enumerate(indices(model_key)[test_index].tolist()[:top_k], start=1):
         retrieved_image_id = train_names(model_key)[int(train_index)]
@@ -2577,8 +2443,8 @@ def save() -> Response:
         "retrieved_similarities": [round(float(item["similarity"]), 6) for item in retrieved],
         "retrieved_diseases_json": {item["image_id"]: item["diseases"] for item in retrieved},
         "true_diseases_hidden_from_reviewer": true_diseases,
-        "true_disease_count": len(true_diseases) if is_rare_lhon_case(image_id) else ("" if row is None else int(row["disease_count"])),
-        "true_disease_category": "rare_disease" if is_rare_lhon_case(image_id) else ("" if row is None else str(row["disease_category"])),
+        "true_disease_count": "" if row is None else int(row["disease_count"]),
+        "true_disease_category": "" if row is None else str(row["disease_category"]),
     }
     upsert_response(response)
     mark_case_status(session_id, status_mode, image_id, "saved", needs_recheck=needs_recheck)
@@ -2592,9 +2458,6 @@ def save() -> Response:
 
 @app.get("/scan/<image_id>")
 def scan_image(image_id: str) -> Response:
-    sample = rare_lhon_sample(image_id)
-    if sample is not None:
-        return send_transformed_query_image(sample["source_path"], image_id=image_id)
     return send_transformed_query_image(
         resolve_image_path(
             image_id,
@@ -2608,9 +2471,6 @@ def scan_image(image_id: str) -> Response:
 @app.get("/anomaly/<image_id>")
 def anomaly_image(image_id: str) -> Response:
     model_key = dinomaly_model_key(request.args.get("model"))
-    sample_path = rare_lhon_anomaly_path(image_id, model_key)
-    if sample_path is not None:
-        return send_resolved_image(sample_path)
     return send_resolved_image(
         resolve_image_path(image_id, [model_anomaly_dir(model_key)], recursive_dirs=[model_dir(model_key)])
     )
